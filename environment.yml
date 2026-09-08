@@ -1,0 +1,21 @@
+name: dat-parkinson
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+  - matplotlib
+  - nibabel
+  - tqdm
+  - pytest
+  - jupyterlab
+  - ipykernel
+  - pip
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu126
+      - torch==2.14.0+cu126
+      - torchvision==0.29.0+cu126

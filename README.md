@@ -14,8 +14,14 @@ and `code-execution-submission.md` extensions).
 ## Constraints that shape this project
 
 - Multicenter data (10 French hospital centers), variable volume shape/voxel
-  spacing — no site/scanner label in `train_labels.csv`; use (shape, spacing)
-  combos as an EDA-level scanner proxy.
+  spacing — no site/scanner label in `train_labels.csv`, and none recoverable
+  from the NIfTI headers (all descriptive string fields are scrubbed). Best
+  available scanner proxy is **(in-plane spacing family, z-spacing, FOV_xy,
+  dtype, obliquity)** — not raw (shape, spacing), which over-fragments one
+  acquisition into ~12 groups and fails its own significance test.
+- **40% of volumes have oblique affines** (up to 40.3° tilt) despite all
+  reporting RAS axis codes. `data.py` must resample through the affine;
+  `as_closest_canonical()` is not sufficient.
 - Log loss is a proper scoring rule — gate on calibrated probability, not AUC.
 - External data/pretrained models: license + public-availability +
   commercial-use terms must be recorded in `RESOURCES.md` before use.
@@ -46,13 +52,237 @@ and `code-execution-submission.md` extensions).
   location + asymmetry). Not yet run — cells that load pixel data are
   meant to be run and inspected by the user, not Claude (see AI-assistant
   data rule above).
+- 2026-09-08: EDA run and documented. Added 2 extra checks (data integrity,
+  smoke-test geometry compatibility) after a coverage review, and 2
+  quantitative sub-checks under the striatum/asymmetry question (centroid +
+  bbox, L-R asymmetry index by class) since visual-only assessment isn't
+  something either of us has the clinical background to judge reliably.
+  Key decisions:
+  - **Resampling target:** physical spacing, not a fixed voxel shape — 66
+    distinct shapes / 52 distinct spacings observed (dominant:
+    `(256,256,256)@2.46mm`, 33.8%).
+  - **Class balance:** 54.8% pathological / 45.2% normal — mild, Stratified
+    K-Fold is enough; `class_weight="balanced"` is an experiment to
+    validate, not a default.
+  - **Scanner-proxy confound** — target rate 0.593/0.502/0.455 across the
+    three largest (shape,spacing) groups vs. 0.548 average. **Superseded
+    on 2026-09-08 by a significance test — see the review entry below;
+    the (shape,spacing) proxy's own omnibus test is not significant.**
+  - **Orientation:** `aff2axcodes` reports RAS for 1362/1362.
+    **Superseded on 2026-09-08: `aff2axcodes` reports only the *closest*
+    canonical axes and 544/1362 volumes are actually oblique — see below.**
+  - **Background/normalization:** p30 threshold recovers real background;
+    per-volume normalization is mandatory (max/p99 span several orders of
+    magnitude across volumes); clip small negative artifacts before
+    thresholding.
+  - **Crop center/size — NOT resolved. Superseded on 2026-09-08**, see the
+    review entry below. The percentile-threshold estimates (p95, then p99 +
+    largest connected component, median bbox ≈29%/33%/32% of shape, median
+    58.5 components) measured the whole head, not the striatum, and were
+    expressed as a fraction of each volume's own shape, which is not
+    comparable across a 3× range of field of view. No crop number is
+    settled; `config.CROP_SIZE_MM` is deliberately `None`.
+  - **L-R asymmetry differs by class** (median 0.073 pathological vs.
+    0.030 normal). **The flip-augmentation conclusion drawn from this was
+    wrong and is retracted — see the review entry below.**
+  - Full what/why/source/found/decision detail lives in the notebook's own
+    markdown cells, one per section.
+- 2026-09-08: **EDA methodology review + header-only re-analysis.** The
+  notebook's structure held up; three of its quantitative conclusions did
+  not. Corrections, and new header-only results (no voxel data read):
+  - **Evaluation reference point pinned:** base rate 0.548458 (747/615),
+    constant-prediction **log loss = 0.688443**. Now in `config.py` as
+    `BASELINE_LOGLOSS`. Every model number gets quoted against it.
+  - **The metadata shortcut is worth essentially nothing.** Now reproduced
+    directly in the notebook (section 11), fitting classifiers on header
+    metadata alone (shape, spacing, FOV, voxel count, obliquity, dtype,
+    spacing-family one-hots; 31 features) to predict `is_pathologic`:
+    logistic regression 5-fold CV log loss **0.688952** (+0.000509 vs.
+    baseline, AUROC 0.551); HistGradientBoosting **0.735176**, i.e. *worse*
+    than predicting the base rate (AUROC 0.523, spread across 5
+    fold-reshuffles sd 0.0025). A site-correlated shortcut on metadata is
+    therefore not an exploitable leak here. This is a negative result and
+    it **downgrades**, but does not remove, the fold-design concern.
+  - **Section 3's confound claim needed the test it never ran, and the
+    grouping was wrong.** χ² across the 11 (shape,spacing) groups with
+    n≥20: **χ²=15.22, dof=10, p=0.124 — not significant.** The
+    (shape,spacing) proxy over-fragments: the whole `(128,128,z)@3.895mm`
+    family is one acquisition split across ~12 groups by axial coverage
+    alone. Collapsing to **in-plane spacing families** gives 7 groups with
+    n≥20 and **χ²=24.54, dof=6, p=0.00042** — the confound is real, but it
+    lives in the *small* families the notebook dismissed as noise
+    (~1.5-1.8 mm: n=48, rate 0.354; ~1.47 mm: n=31, 0.355) rather than in
+    the large ones. Pairwise on the big three: 460 vs 143 z=+2.93
+    (p=0.0034), 460 vs 207 z=+2.20 (p=0.028), 207 vs 143 p=0.378.
+  - **40% of volumes are oblique — section 4's conclusion was wrong.**
+    `nib.aff2axcodes` reports only the *closest* canonical axes, so
+    "1362/1362 RAS" did not mean axis-aligned. **544/1362 (39.9%)** have a
+    non-diagonal affine rotation block: median tilt 4.7°, max **40.3°**.
+    `as_closest_canonical()` only permutes/flips axes and will **not**
+    correct this. `data.py` must do a real affine-aware resample.
+    qform/sform agree exactly on all 1362 (both code 1), diag signs all
+    `+++`.
+  - **Obliquity is a strong scanner signature** and is uncorrelated with
+    the target (0.546 oblique vs. 0.550 axis-aligned), so it is a clean
+    site marker: 2.398 mm → 100% oblique (n=149), 3.895 mm → 100% (n=325),
+    ~3.30 mm → 67% (n=39), 2.46 mm → 8% (n=528), and 2.30/1.47/2.00/3.59/
+    4.42 mm → 0%. Best available site proxy = (in-plane spacing family,
+    z-spacing, FOV_xy, dtype, obliquity).
+  - **No scanner strings survive in the headers.** `descrip`, `aux_file`,
+    `db_name`, `intent_name` are empty on all 1362 (organizers scrubbed
+    them); `scl_slope`/`scl_inter` are NaN on all 1362. A real centre id
+    cannot be recovered this way — logged as a negative result so it is
+    not retried.
+  - **Section 5's negative-intensity explanation was wrong.** It attributed
+    negative minima to `scl_slope`/`scl_inter` scaling, but those are unset
+    on every volume. The actual cause: **16 volumes are stored as `int16`,
+    not `uint16`** (1346 are `uint16`), contradicting the problem
+    description. The `np.clip(..., 0, None)` guard is still right; the
+    reason recorded for it was not.
+  - **Field of view computed (shape × spacing), which nothing had done.**
+    FOV[x,y] 175.6 → 629.8 mm, FOV[z] **108.0** → 629.8 mm. The z minimum
+    is what bounds any fixed-mm crop: 1 volume under 110 mm, 4 under
+    120 mm, 69 under 140 mm. Recorded as `config.MIN_FOV_MM`.
+  - **Resampling target chosen: 2.46 mm isotropic** (`config.TARGET_SPACING`)
+    — the median *and* modal spacing, identity for 528 volumes, and it
+    keeps an ~11 mL striatum at ~739 voxels instead of ~186 at 3.895 mm.
+  - **Flip-augmentation caution retracted.** The section-6b index
+    `|left−right|/(left+right)` is *invariant* under a left-right flip, so
+    it cannot be evidence for or against flip augmentation in either
+    direction. Deciding this needs the **signed** index instead; until that
+    is run, the project has no evidence on flip.
+    **Resolved 2026-09-08** — corrected 6b run on all 1362 volumes: signed
+    index means -0.0037 (normal) / -0.0083 (pathological), both
+    **not significantly different from 0** (Wilcoxon p=0.056 / p=0.064) and
+    not different from each other (Mann-Whitney p=0.162). Magnitude *is*
+    highly different by class (p<0.00001, ~2.4-2.7× higher pathological) —
+    clinically coherent (PD causes real asymmetry, but which side varies
+    patient to patient, so the population-level signed average is ~0 in
+    both groups). **Flip augmentation is safe to try** — no population
+    directional signal to destroy, and the actual discriminative signal
+    (magnitude) is flip-invariant regardless. p-values are close to 0.05,
+    though, so validate via the gate rather than treating this as settled.
+  - **Section 6a's striatum estimate is invalid** (crop numbers retracted
+    above). `np.percentile(data, 99)` retains 1% of *all* voxels by
+    construction — 167,772 voxels ≈ 2.5 L at 2.46 mm in the dominant
+    (256,256,256) group, larger than a whole head, against an ~11 mL
+    striatum. The measured bbox is also just a restatement of the
+    threshold: for a blob of fraction *f*, the bbox linear fraction tracks
+    *f*^(1/3), and 0.05^(1/3)=0.37 → 0.01^(1/3)=0.215 explains the whole
+    p95→p99 "improvement". Corrected cells (physical-volume mask in mL, two
+    largest components, results in mm, broken down by site proxy) are
+    written and awaiting a run.
+- 2026-09-08: **Follow-up reference/prior-art search** (extends the
+  2026-09-07 scan), targeted at the confounds and gaps the EDA methodology
+  review actually found, plus a Kaggle check for comparable projects. All
+  entries logged in `RESOURCES.md`, full detail there.
+  - **Harmonization, for the section 3/3a confound**: Fortin et al. 2018
+    (ComBat, NeuroImage 167:104-120) — the field's standard tool for
+    site-effect removal on derived features. A 7-site PPMI radiomics study
+    (Frontiers 2022) using the *same* confound reports AUC 0.71→0.77 after
+    ComBat-GAM and states per-volume intensity normalization alone did not
+    remove scanner variability — independent confirmation that section 5's
+    normalization and section 3a's fold-stratification plan address
+    different problems, not the same one. Logged as a candidate for the
+    classical/radiomics baseline (`## Next steps`), not the 3D-CNN track.
+  - **PPMI's own SBR methodology**: standardized VOI-atlas approach (not a
+    percentile threshold) over caudate/putamen with the occipital lobe as
+    reference, and **left-right percent asymmetry as a standard clinical
+    metric** — confirms section 6b's asymmetry index measures a real
+    clinical quantity, and is a fallback if the physical-volume threshold
+    in the corrected 6a proves unreliable once run.
+  - **Kaggle check**: no DaT-SPECT competition exists (niche modality).
+    Closest analog by problem shape: RSNA-MICCAI Brain Tumor Radiogenomic
+    Classification (multi-parameter 3D MRI, multi-institution, AUROC).
+    **The load-bearing finding isn't a technique, it's a warning**: the
+    BraTS 2021 benchmark's own follow-up validation study found that of
+    models scoring well on small single-center studies, **~80% showed no
+    significant difference from chance** once validated on the full
+    multicenter set. Several of this project's own cited PPMI papers report
+    92-99.5% accuracy on small (200-2720 volume) single/few-site subsets —
+    the same shape of claim. Do not treat those numbers as a realistic
+    target until validated on the actual 10-center, 1362-volume mix
+    (reinforces the leave-one-family-out check below).
+  - One Kaggle dataset candidate ("Parkinson's Disease Dat and MRI Scans",
+    rishikjha) checked and rejected — no stated license or source.
+  - **Follow-up (2026-09-08, user-provided PDF): Wenzel et al. 2019**
+    (EJNMMI, the paper behind `mtwenzel/parkinson-classification`) closes
+    the last open citation from the 2026-09-07 scan. Directly actionable:
+    a CNN trained only on their higher-resolution PPMI images generalized
+    badly to lower-resolution ones (accuracy 0.629, effectively predicting
+    one class), while a CNN trained on lower-resolution data generalized
+    well to higher-resolution (0.945) — asymmetric. **For us**: don't let
+    3D-CNN training skew toward the dominant 2.46mm family (528/1362,
+    highest-resolution); include the full spacing range, biased if
+    anything toward the coarser end. Also: their "hottest voxels" SBR
+    method — average the hottest voxels up to a **fixed physical volume**
+    (15 mL for whole striatum) — is the same technique EDA section 6a's
+    corrected code already uses, independent validation it's not ad hoc.
+    Full detail in `RESOURCES.md`.
+- 2026-09-08: `environment.yml` added and `dat-parkinson` conda env created
+  (per the `structuring-ml-projects` skill's per-project environment step).
+  Data-science stack plus PyTorch 2.14.0+cu126/torchvision 0.29.0+cu126 —
+  confirmed `torch.cuda.is_available() == True` on the local GPU (RTX 4060
+  Laptop, 8GB). The PyPI `torch` wheel defaults to CPU-only; the CUDA build
+  needs `--extra-index-url https://download.pytorch.org/whl/cu126` pinned
+  in `environment.yml` (cu121/cu124 don't publish this torch release).
 
 ## Next steps
 
-- [ ] Run `notebooks/01_eda_volumes.ipynb` and record the answers to its 7
-      questions here (geometry target, striatum crop size, class balance,
-      scanner-proxy confound, orientation, background threshold,
-      asymmetry).
+- [x] Run `notebooks/01_eda_volumes.ipynb` and record the answers to its
+      questions here — see Progress above (2026-09-08).
+- [x] Redo the striatum crop-size estimate with a p99 threshold +
+      connected-component filter — see Progress above (2026-09-08).
+- [x] Section 6b (signed L-R asymmetry) re-run on all 1362 volumes — see
+      Progress above (2026-09-08). Flip augmentation cleared as safe to try.
+- [x] Section 6d (single-feature ranking) re-run on all 1362 volumes.
+      **`abs_asym` (striatal L-R asymmetry magnitude) alone: AUC 0.731,
+      log loss 0.6126, a -0.0759 improvement over baseline** — stronger
+      than the entire 31-feature metadata-only model (section 11, AUC
+      0.551). `striatal_ratio`: AUC 0.621, -0.0212. Everything else
+      (total_counts, vol_max, vol_p99, signed_asym) is noise-floor-level.
+      **Strong candidate features for the classical baseline**, and a
+      reference point for the CNN track (log loss ≈0.61 from one scalar —
+      the CNN should clear this once trained). Full table in `RESOURCES.md`
+      is unnecessary — it's in the notebook's own section 6d findings cell.
+- [x] Sections 5 + 6c (adaptive background threshold, per-family intensity)
+      re-run on 119 volumes stratified across all 17 spacing families.
+      Verifies, doesn't revise, the earlier decision: `p30 > 0` for 35/119
+      (29%) volumes, but **deterministically by family** — every volume in
+      the 3 finest-resolution families (2.00mm, ~1.47mm, ~1.5-1.8mm) has
+      `p30>0`, every volume in every coarser family has `p30=0`
+      (`zero_frac` median 0.043 vs. 0.965 — a 22× difference in how much
+      of the FOV is background). Confirms `BACKGROUND_MAX_FRACTION=0.05`
+      is load-bearing for those 3 families specifically, and that raw
+      intensity scale (why `vol_max`/`vol_p99`/`total_counts` scored at
+      noise-floor in section 6d) is dominated by scanner family, not
+      pathology — only scale-free ratios are comparable across the
+      dataset. No config change.
+- [x] Section 12 (duplicate fingerprint) re-run on all 1362 volumes: 0
+      hash collisions, 0 total-intensity collisions, 0 volumes sharing
+      both geometry and intensity. **"One file per patient" confirmed** —
+      `GroupKFold` on patient identity remains unnecessary.
+- [x] **Section 6a RESOLVED. `config.CROP_SIZE_MM` is set.** Excluding
+      the 7 named outlier uids (112/119 remaining), `kept_mL` is tight and
+      trustworthy: mean 19.10, std 3.25, median 20.00 exactly, max 29.34
+      (no more 500+ mL blobs). Final values, now in `config.py`:
+      - `CROP_SIZE_MM = (135.0, 70.0, 105.0)` mm — fits `MIN_FOV_MM` on
+        all 3 axes, but only by **3 mm on z** (105 vs. 108) — `data.py`
+        must pad/clamp explicitly for the handful of tight-FOV volumes
+        (section 7), not assume headroom.
+      - `CROP_CENTER_MM = (1.5, 22.8, -15.5)` mm (median offset from
+        geometric centre) — z is negative (inferior to centre), matching
+        the independently-measured `centroid_z ≈ 0.37-0.39` finding.
+      - `TARGET_SHAPE = (56, 30, 44)` voxels at `TARGET_SPACING = 2.46mm`.
+      `ft07x5ic` (the 523 mL outlier) checked and has an unremarkable
+      header (normal `uint16`, mild obliquity, ordinary shape) — a real
+      per-file pixel-content anomaly, not a recurring pattern. **Because
+      this kind of anomaly can recur on unseen data, `data.py` must
+      sanity-check the detected striatum region size defensively** (flag
+      or fall back if extraction lands far outside ~10-30 mL), not assume
+      every file behaves like the clean 112. This closes the last blocker
+      for `data.py`. Section 6d's `abs_asym`/`striatal_ratio` numbers used
+      the same `TARGET_ML=20.0` mask and don't need to be re-run.
 - [ ] Pin down the evaluation harness (`src/evaluate.py`): log loss +
       AUROC, Stratified K-Fold on `is_pathologic`.
 - [ ] Baseline: handcrafted/radiomics features + classical model.

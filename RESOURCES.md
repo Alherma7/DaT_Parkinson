@@ -144,6 +144,125 @@ this project gets an entry here before it's used, per the
   volumetric 3D-CNN main track; both cited pretraining sources carry their
   own license questions (see `## Pretrained models & external data` below)
   and would need their own eligibility check before use, same as ImageNet.
+- **Fortin et al. 2018, "Harmonization of cortical thickness measurements
+  across scanners and sites"** (NeuroImage 167:104-120) — introduces
+  ComBat harmonization (adapted from genomics batch-effect correction) to
+  neuroimaging: removes additive/multiplicative site effects from
+  image-derived features via empirical Bayes while preserving biological
+  variance.
+  Why: this project's own EDA (`01_eda_volumes.ipynb` section 3/3a) found a
+  real target-rate confound tied to acquisition family, and section 11
+  found it's not exploitable via metadata alone but per-volume z-score
+  normalization (section 5) only addresses intensity *scale*, not a
+  site-correlated shift in derived *features* — ComBat is the standard
+  tool for the latter, candidate for the classical/radiomics baseline
+  track (operates on scalar features, not raw voxel grids, so not
+  directly applicable to the 3D-CNN track without a different approach).
+- **"The impact of harmonization on radiomic features in Parkinson's
+  disease and healthy controls: A multicenter study"** (Frontiers in
+  Neuroscience, 2022, https://www.frontiersin.org/articles/10.3389/fnins.2022.1012287/full)
+  — 7 PPMI sites (Philips/GE/Siemens, 1.5-3T), 88 radiomic features from
+  bilateral caudate/putamen/thalamus, ComBat-GAM harmonization via
+  NeuroHarmonize.
+  Why: closest direct precedent for our own confound problem — same PPMI
+  multi-site setup, explicitly reports **AUC 0.71 → 0.77 after
+  harmonization**, and states plainly that "intensity normalization alone
+  proved insufficient for eliminating scanner-related variability" —
+  independent confirmation that section 5's per-volume normalization is
+  necessary but not sufficient for the section 3/3a confound. Also notes a
+  leakage-avoidance detail worth replicating: harmonization parameters
+  fit on controls only, before applying to patients.
+- **Johnson, Li & Rabinovic 2007, "Adjusting batch effects in microarray
+  expression data using empirical Bayes methods"** (Biostatistics 8(1):
+  118-127) — the original ComBat algorithm (genomics) that Fortin et al.
+  2018 adapts to neuroimaging: standardize per-feature, estimate naive
+  per-batch location/scale on the standardized data, shrink those toward
+  an across-batch empirical-Bayes prior (method-of-moments normal/inverse-
+  gamma), then adjust.
+  Why: this is the actual algorithm implemented in
+  `src/features.py::fit_combat`/`apply_combat` (parametric empirical
+  Bayes, no other covariates besides batch) — Fortin's paper motivates
+  *why* to use it here, this paper is *how* it's computed.
+- **Wenzel et al. 2019, "Automatic classification of dopamine transporter
+  SPECT: deep convolutional neural networks can be trained to be robust
+  with respect to variable image characteristics"** (EJNMMI 46(13):2800-2811,
+  DOI 10.1007/s00259-019-04502-5) — full text read (user-provided PDF,
+  paywalled, no open-access copy found). 645 PPMI FP-CIT SPECT (207 HC,
+  438 PD) plus an independent clinical sample of 298 patients (2 different
+  reconstruction algorithms). Directly on-topic: this is the paper behind
+  the `mtwenzel/parkinson-classification` GitHub repo already listed above.
+  Why, concrete takeaways:
+  - **A CNN is measurably more robust to heterogeneous image
+    characteristics than semi-quantitative SBR, but only if trained on
+    that heterogeneity — and the direction of training matters.** They
+    simulated site variability via 18-mm Gaussian smoothing, then trained
+    separately on original, smoothed, and mixed (both) data. SBR accuracy
+    dropped significantly in the mixed setting (e.g. AAL-SBR 0.957→0.900,
+    p=0.004); CNN accuracy did not (0.972 vs. 0.967, ns). Confirmed in the
+    independent clinical sample (2 reconstruction algorithms) and by
+    applying the PPMI-mixed-trained CNN directly to that clinical sample.
+    **Cross-site test was asymmetric**: CNN trained on original
+    (high-resolution) data generalized badly to smoothed data (accuracy
+    0.629 — sensitivity 1.000/specificity 0.259, i.e. it just predicted
+    the positive class); CNN trained on smoothed (low-resolution) data
+    generalized well to original data (accuracy 0.945). **Actionable for
+    us**: if the 3D-CNN track is trained on a subset skewed toward the
+    dominant `2.46mm` family (528/1362, the highest-resolution group per
+    EDA section 7), it risks generalizing badly to the coarser families
+    (`3.895mm`, 325 volumes) — training should include the full spacing
+    range actually present, not just the dominant/cleanest group, and if
+    anything bias exposure toward the coarser end during training.
+  - **Their "hottest voxels" (HV) semi-quantification is methodologically
+    what this project's corrected EDA section 6a already does.** HV-SBR
+    averages the hottest voxels within a large ROI up to a **fixed
+    physical volume** (5/10/15 mL for unilateral caudate/putamen/whole
+    striatum) rather than a fixed voxel count or percentile — this is an
+    independent, published validation of the "keep the top-N voxels by
+    physical mL" approach used in section 6a's corrected code, not an
+    ad hoc invention. Confirms the ~15-25 mL target range used there is
+    in the right ballpark (their whole-striatum HV target is 15 mL).
+  - **Normalization detail worth comparing against section 5's per-volume
+    z-score**: they scale voxel intensity to the 75th percentile of a
+    reference region (whole brain excluding striata/thalamus/brainstem/
+    ventricles), not a global z-score. A candidate refinement for
+    `config.INTENSITY_NORM` if z-score normalization underperforms once
+    validated.
+  - **Third independent confirmation that ImageNet transfer learning
+    underperforms on this modality** (after Chegodaev et al. and their own
+    citation of Kim et al. 2018, who got only 0.844 accuracy via
+    InceptionV3 transfer learning): validation loss rose while training
+    loss converged in their own transfer-learning experiments —
+    overfitting, attributed to a resolution/domain mismatch between
+    natural images and low-resolution FP-CIT SPECT. Reinforces training
+    from scratch as the default, ImageNet init as an experiment to
+    validate, not assume.
+  - **Architecture used**: 2D CNN on thick axial "slab" views through the
+    striatum (2×2×12 mm³, not full 3D volumes) — 4 conv blocks
+    (64/64/96/128 3×3 filters, batch norm, 2×2 max pool) → flatten → 1024
+    dense → 2-unit softmax, 2,872,642 parameters, Adam, categorical
+    cross-entropy, best-validation-checkpoint kept (same model-selection
+    rule as `deep-learning-imaging.md`). A lighter-weight comparison point
+    to Boulkrinat et al.'s from-scratch 3D CNN if the full 3D track proves
+    too expensive within the 3h submission budget.
+  - **Scope caveat**: their "multi-site variability" is *simulated*
+    (post-hoc Gaussian smoothing of PPMI images), not real multi-center
+    data with real scanner/reconstruction differences, and the clinical
+    validation used only 2 reconstruction algorithms from 1 institution —
+    weaker generalization evidence than our own 10-real-center dataset
+    will provide once the CNN is actually trained and validated per family
+    (`README.md` Next steps, leave-one-family-out check).
+- **PPMI's own striatal binding ratio (SBR) methodology** (see "Baseline
+  Neuroimaging Characteristics of the PPMI..." https://www.michaeljfox.org/publication/baseline-neuroimaging-characteristics-parkinsons-progression-marker-initiative-ppmi
+  and the count-based SBR method, PMC6314989) — standardized VOI template
+  (not a percentile threshold) over left/right caudate + putamen, occipital
+  lobe as reference region, with **left-right percent asymmetry** reported
+  as a standard derived clinical metric.
+  Why: validates that this project's own asymmetry index (`01_eda_volumes.ipynb`
+  section 6b) is measuring a clinically recognized quantity, not an
+  invented proxy — but PPMI's atlas-based VOI placement is more principled
+  than this project's physical-volume-threshold approximation (section 6a)
+  and is a candidate to revisit if the threshold-based crop proves
+  unreliable once actually run.
 
 ## Comparable projects
 
@@ -170,6 +289,58 @@ this project gets an entry here before it's used, per the
   Why: worth checking for submission-packaging patterns and how other
   winners structured a code-execution medical-imaging solution, even
   though none is DAT-SPECT-specific.
+- **RSNA-MICCAI Brain Tumor Radiogenomic Classification** (Kaggle
+  competition, https://www.kaggle.com/competitions/rsna-miccai-brain-tumor-radiogenomic-classification)
+  — no DAT-SPECT Kaggle competition exists (checked 2026-09-08, niche
+  modality), but this is the closest public analog by problem shape:
+  binary classification (MGMT biomarker status) on multi-parameter 3D MRI
+  (T1w/T1wCE/T2w/FLAIR), AUROC-scored, multi-institution (BraTS, 19
+  institutions, different scanners/protocols, released as NIfTI — the
+  same class of multi-site variability sections 3/3a/4 of our own EDA
+  found empirically). Public EDA notebook: "Brain Tumor Radiogenomic
+  Classification - EDA" (kaggle.com/tanlikesmath/brain-tumor-radiogenomic-classification-eda,
+  not fetchable without a Kaggle session — link only, not reviewed).
+  Solution repos (light detail, READMEs only — actual notebooks not
+  reviewed): cedricsoares/kaggle-rsna-miccai-brain-tumor-radiogenomic-classification;
+  MahmoudRabea13/RSNA-MICCAI-brain-tumor-radiogenomic-classification
+  tried ViT3D/ResNet50/Xception/EfficientNet-B3, best result Xception
+  AUC 0.638 (val) / 0.617 (test) — notably weak for a well-resourced
+  Kaggle effort; SrLozano/Brain-Tumor-Radiogenomic-Classification
+  (transfer learning).
+  **The actual lesson, from the benchmark's own follow-up validation
+  study** (Validation of MRI-Based Models to Predict MGMT Promoter
+  Methylation in Gliomas: BraTS 2021 Radiogenomics Challenge, PMC9562637):
+  when models that scored well on small single-center studies were
+  externally validated on the challenge's larger multicenter set,
+  **~80% showed no significant difference from chance (50%)** — the
+  smaller studies' promising accuracy did not generalize. This matches
+  the low AUCs (0.61-0.64) the solution repos above report despite
+  competent architectures.
+  Why: a direct, sourced caution against this project's own prior-art
+  numbers — several PPMI papers logged in `## Papers` above report
+  92-99.5% accuracy on small (200-2720 volume) single/few-site subsets,
+  the same shape of claim this benchmark showed largely failed to
+  reproduce at multicenter scale. Reinforces `SKILL.md` step 6's
+  noise-floor discipline and this project's own leave-one-family-out
+  check (`README.md` Next steps) — validate on the *actual* 10-center,
+  1362-volume mix before trusting any literature accuracy number as a
+  realistic target, and treat a small-sample high accuracy as a claim to
+  verify, not a benchmark to match.
+- **RSNA-ASNR-MICCAI BraTS 2021 benchmark** (arXiv:2107.02314) — the
+  dataset behind the competition above: multimodal 3D brain MRI from 19
+  institutions, different scanners/protocols, released as NIfTI.
+  Why: the benchmark paper's own discussion of multi-site variability is
+  a second, independent source (beyond the PPMI radiomics-harmonization
+  paper above) for how the field handles the same class of problem this
+  project's sections 3/3a/4 uncovered empirically.
+- **"Parkinson's Disease Dat and MRI Scans"** (Kaggle dataset,
+  kaggle.com/datasets/rishikjha/parkinsons-disease-dat-and-mri-scans) —
+  checked 2026-09-08: license and original source are **not stated** on
+  the dataset page. Logged as a negative result, not a candidate — do not
+  use without a stated license, and note the competition's own rules
+  already restrict external DAT-SPECT-like data to what can be publicly
+  and freely verified (see External Data caveats below); an
+  unattributed re-upload does not clear that bar regardless of license.
 
 ## Pretrained models & external data
 
