@@ -4,6 +4,8 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+import torch
+import torch.nn as nn
 
 import config
 import features
@@ -64,3 +66,57 @@ class ComBatHarmonizedPipeline:
 def build_combat_baseline():
     """`ComBatHarmonizedPipeline` factory -- see its docstring."""
     return ComBatHarmonizedPipeline()
+
+
+class DatCNN(nn.Module):
+    """Small 3D CNN, trained from scratch (no pretrained backbone --
+    RESOURCES.md has three independent findings against ImageNet transfer
+    on this modality, and DINOv3/PPMI eligibility is unresolved/ineligible;
+    see docs/superpowers/specs/2026-09-08-cnn-data-plumbing-design.md).
+    He init / BatchNorm / dropout / Adam, no LR schedule (Geron Ch.11
+    default DNN config; matches config.LR_SCHEDULE = None). Input is
+    `config.TARGET_SHAPE` = (56, 30, 44), 1 channel. Returns a raw logit
+    (not a sigmoid output) -- use with `BCEWithLogitsLoss`.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv3d(1, 16, kernel_size=3, padding=1), nn.BatchNorm3d(16),
+            nn.ReLU(inplace=True), nn.MaxPool3d(2),
+            nn.Conv3d(16, 32, kernel_size=3, padding=1), nn.BatchNorm3d(32),
+            nn.ReLU(inplace=True), nn.MaxPool3d(2),
+            nn.Conv3d(32, 64, kernel_size=3, padding=1), nn.BatchNorm3d(64),
+            nn.ReLU(inplace=True), nn.MaxPool3d(2),
+            nn.Conv3d(64, 128, kernel_size=3, padding=1), nn.BatchNorm3d(128),
+            nn.ReLU(inplace=True), nn.AdaptiveAvgPool3d(1),
+        )
+        self.classifier = nn.Sequential(nn.Flatten(), nn.Dropout(0.4), nn.Linear(128, 1))
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, (nn.Conv3d, nn.Linear)):
+                nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        return self.classifier(self.features(x)).squeeze(-1)
+
+
+def build_model():
+    """`DatCNN` factory -- fresh instance each call, mirroring
+    `build_classical_baseline()`'s existing convention."""
+    return DatCNN()
+
+
+def predict(model, x):
+    """Forward pass -> sigmoid -> numpy probabilities -- the deep-learning
+    analogue of `predict_proba` on the classical pipelines. Puts the model
+    in eval mode (disables dropout/BatchNorm training behavior) and runs
+    without gradient tracking.
+    """
+    model.eval()
+    with torch.no_grad():
+        return torch.sigmoid(model(x)).cpu().numpy()

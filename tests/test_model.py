@@ -4,6 +4,7 @@ import numpy as np
 
 import features
 import model
+import model as model_module
 
 
 def test_build_classical_baseline_fits_and_predicts_valid_probabilities():
@@ -90,3 +91,56 @@ def test_build_combat_baseline_returns_a_new_instance_each_call():
     second = model.build_combat_baseline()
 
     assert first is not second
+
+
+import torch
+
+
+# --- DatCNN / build_model / predict ------------------------------------------
+
+def test_build_model_forward_pass_shape_and_finiteness():
+    model = model_module.build_model()
+    x = torch.randn(4, 1, 56, 30, 44)
+
+    out = model(x)
+
+    assert out.shape == (4,)
+    assert torch.isfinite(out).all()
+
+
+def test_build_model_returns_a_new_instance_each_call():
+    first = model_module.build_model()
+    second = model_module.build_model()
+
+    assert first is not second
+
+
+def test_predict_returns_probabilities_in_zero_one():
+    model = model_module.build_model()
+    x = torch.randn(3, 1, 56, 30, 44)
+
+    proba = model_module.predict(model, x)
+
+    assert proba.shape == (3,)
+    assert (proba >= 0).all() and (proba <= 1).all()
+
+
+def test_datcnn_can_overfit_a_tiny_batch():
+    """Rung-0-style sanity check (deep-learning-imaging.md): the
+    architecture itself must be able to drive loss to near-zero on a
+    handful of samples -- catches a frozen-parameter or shape bug that a
+    single forward pass would not."""
+    torch.manual_seed(0)
+    model = model_module.build_model()
+    x = torch.randn(4, 1, 56, 30, 44)
+    y = torch.tensor([0.0, 1.0, 0.0, 1.0])
+    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+    loss_fn = torch.nn.BCEWithLogitsLoss()
+
+    for _ in range(40):
+        opt.zero_grad()
+        loss = loss_fn(model(x), y)
+        loss.backward()
+        opt.step()
+
+    assert loss.item() < 0.1
