@@ -318,7 +318,42 @@ and `code-execution-submission.md` extensions).
       data, which cannot be split 5 ways). Additionally run
       leave-one-family-out once at rung 2 as a transfer check, and report
       the scored metric per family, not only pooled.
-- [ ] Baseline: handcrafted/radiomics features + classical model.
+- [x] Baseline gate cleared in `notebooks/03_baseline_classical.ipynb`
+      (`StandardScaler` + `LogisticRegression`, 5 seeds, apples-to-apples
+      via `evaluate.py`): `abs_asym` alone 0.5959, `striatal_ratio` alone
+      0.6666 (weak on its own), **combined 0.5831 — beats `abs_asym` alone
+      by -0.0128, 18-25× this run's own sd (0.0003-0.0007), a real win**.
+      Both features graduate to `src/features.py` + `src/model.py`.
+      **Methodology note**: this pipeline adds `StandardScaler`, which
+      `02_evaluate_noise_floor.ipynb` didn't — that changes the
+      `abs_asym`-alone number (0.6119 there vs. 0.5959 here), so `02`'s
+      sd=0.0001 isn't the right noise reference for this comparison; use
+      this run's own per-feature-set sd instead. `02` still stands for
+      confirming `evaluate.py` reproduces section 6d end-to-end.
+- [x] `src/features.py` + `src/model.py` written (TDD, synthetic 3D
+      arrays, not real patient data). 20/20 tests pass, clean.
+      `features.striatum_mask`/`signed_asymmetry`/`striatal_ratio` use the
+      **corrected** (central-region-restricted) mask logic from EDA
+      section 6a's final resolution — not the unrestricted version
+      section 6d originally used to produce `eda_features.csv`. TDD caught
+      two real bugs before they shipped: `striatum_mask` on an all-zero
+      volume returned the *entire* array as the mask (a `>=` threshold tie
+      on an all-zero central region), and a peripheral artifact was
+      confirmed excluded by the central-margin restriction.
+      `src/model.py::build_classical_baseline()` is
+      `StandardScaler` + `LogisticRegression`.
+- [x] **Gate re-validated against the real `src/features.py` code**
+      (`notebooks/03_baseline_classical.ipynb`, all 1362 volumes recomputed
+      via `src/features.py` itself, 0 skipped as degenerate -- writes
+      `data/processed/baseline_features.csv`; same abs_asym/striatal_ratio/
+      combined comparison via `evaluate.py`, 5 seeds): `abs_asym` alone
+      0.5889, `striatal_ratio` alone 0.6647, **combined 0.5753 — beats
+      `abs_asym` alone by -0.0136, ~20-45× this run's own sd
+      (0.0003-0.0006)**. Confirms (doesn't revise) the provisional pass:
+      same direction and magnitude (-0.1132 vs. baseline here, -0.1054
+      there). The central-region-restricted mask changed the exact numbers
+      slightly but not the decision. `src/model.py::build_classical_baseline()`
+      docstring updated to cite these confirmed numbers.
 - [ ] Main track: 3D CNN on resampled volumes (training from scratch or a
       clearly-eligible pretrained backbone — see the ImageNet/PPMI caveat
       above).
