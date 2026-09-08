@@ -114,9 +114,16 @@ def build_model():
 def predict(model, x):
     """Forward pass -> sigmoid -> numpy probabilities -- the deep-learning
     analogue of `predict_proba` on the classical pipelines. Puts the model
-    in eval mode (disables dropout/BatchNorm training behavior) and runs
-    without gradient tracking.
+    in eval mode (disables dropout/BatchNorm training behavior), moves the
+    input onto the model's own device, and restores the model's prior
+    training/eval state afterward so mid-training validation calls don't
+    silently leave it in eval mode.
     """
+    was_training = model.training
     model.eval()
-    with torch.no_grad():
-        return torch.sigmoid(model(x)).cpu().numpy()
+    try:
+        with torch.no_grad():
+            x = x.to(next(model.parameters()).device)
+            return torch.sigmoid(model(x)).cpu().numpy()
+    finally:
+        model.train(was_training)

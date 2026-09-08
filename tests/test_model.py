@@ -2,6 +2,7 @@
 
 import numpy as np
 
+import config
 import features
 import model
 import model as model_module
@@ -100,7 +101,7 @@ import torch
 
 def test_build_model_forward_pass_shape_and_finiteness():
     model = model_module.build_model()
-    x = torch.randn(4, 1, 56, 30, 44)
+    x = torch.randn(4, 1, *config.TARGET_SHAPE)
 
     out = model(x)
 
@@ -117,12 +118,29 @@ def test_build_model_returns_a_new_instance_each_call():
 
 def test_predict_returns_probabilities_in_zero_one():
     model = model_module.build_model()
-    x = torch.randn(3, 1, 56, 30, 44)
+    x = torch.randn(3, 1, *config.TARGET_SHAPE)
 
     proba = model_module.predict(model, x)
 
     assert proba.shape == (3,)
     assert (proba >= 0).all() and (proba <= 1).all()
+
+
+def test_predict_restores_prior_training_eval_state():
+    """Regression guard: predict() must not permanently flip the model into
+    eval mode -- a future train.py calling predict() for per-epoch
+    validation would otherwise silently disable dropout/BatchNorm training
+    behavior for the rest of training."""
+    x = torch.randn(2, 1, *config.TARGET_SHAPE)
+
+    net = model_module.build_model()
+    net.train()
+    model_module.predict(net, x)
+    assert net.training is True
+
+    net.eval()
+    model_module.predict(net, x)
+    assert net.training is False
 
 
 def test_datcnn_can_overfit_a_tiny_batch():
@@ -132,7 +150,7 @@ def test_datcnn_can_overfit_a_tiny_batch():
     single forward pass would not."""
     torch.manual_seed(0)
     model = model_module.build_model()
-    x = torch.randn(4, 1, 56, 30, 44)
+    x = torch.randn(4, 1, *config.TARGET_SHAPE)
     y = torch.tensor([0.0, 1.0, 0.0, 1.0])
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
     loss_fn = torch.nn.BCEWithLogitsLoss()

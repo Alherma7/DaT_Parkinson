@@ -9,6 +9,8 @@ crops/pads to a fixed physical box every time -- the standard pattern for
 feeding a CNN a consistent input geometry.
 """
 
+import warnings
+
 import nibabel as nib
 import nibabel.processing as nibproc
 import numpy as np
@@ -96,4 +98,9 @@ def load_volume(uid):
     cropped = crop_or_pad(resampled, config.TARGET_SPACING, config.CROP_CENTER_MM,
                            config.TARGET_SHAPE)
     normalized = normalize_intensity(cropped)
+    foreground_fraction = float(np.mean(np.abs(normalized) > 1e-6))
+    if foreground_fraction < 0.01 or normalized.std() <= 1e-6:
+        warnings.warn(
+            f"load_volume({uid!r}): degenerate/near-empty volume after preprocessing"
+        )
     return normalized[np.newaxis, ...].astype(np.float32)

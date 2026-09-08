@@ -135,3 +135,18 @@ def test_load_volume_returns_target_shape_with_channel_dim(tmp_path, monkeypatch
     assert out.shape == (1, *data.config.TARGET_SHAPE)
     assert out.dtype == np.float32
     assert np.isfinite(out).all()
+
+
+def test_load_volume_warns_on_degenerate_all_zero_volume(tmp_path, monkeypatch):
+    import nibabel as nib
+
+    volume = np.zeros((60, 60, 40), dtype=np.float32)  # no signal anywhere
+    affine = np.eye(4) * 2.46
+    affine[3, 3] = 1.0
+    nib.save(nib.Nifti1Image(volume, affine), tmp_path / "degenerate_uid.nii.gz")
+    monkeypatch.setattr(data.config, "NIFTI_DIR", tmp_path)
+
+    with pytest.warns(UserWarning, match="degenerate/near-empty volume"):
+        out = data.load_volume("degenerate_uid")
+
+    assert out.shape == (1, *data.config.TARGET_SHAPE)

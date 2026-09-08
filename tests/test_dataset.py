@@ -6,13 +6,14 @@ import numpy as np
 import pytest
 import torch
 
+import config
 import data
 import dataset
 
 
 def _fake_load_volume(uid):
     rng = np.random.RandomState(abs(hash(uid)) % (2**31))
-    return rng.normal(size=(1, 56, 30, 44)).astype(np.float32)
+    return rng.normal(size=(1, *config.TARGET_SHAPE)).astype(np.float32)
 
 
 def test_dataset_with_labels_returns_tensor_and_label(monkeypatch):
@@ -22,7 +23,7 @@ def test_dataset_with_labels_returns_tensor_and_label(monkeypatch):
     tensor, label = ds[1]
 
     assert isinstance(tensor, torch.Tensor)
-    assert tensor.shape == (1, 56, 30, 44)
+    assert tensor.shape == (1, *config.TARGET_SHAPE)
     assert tensor.dtype == torch.float32
     assert label == pytest.approx(1.0)
     assert isinstance(label, torch.Tensor)
