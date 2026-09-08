@@ -354,6 +354,31 @@ and `code-execution-submission.md` extensions).
       there). The central-region-restricted mask changed the exact numbers
       slightly but not the decision. `src/model.py::build_classical_baseline()`
       docstring updated to cite these confirmed numbers.
+- [x] Baseline candidate technique for the site confound at the feature
+      level: **ComBat** harmonization (Fortin et al. 2018) — a 7-site
+      PPMI radiomics study using the same confound reported AUC 0.71→0.77
+      after ComBat-GAM, and found per-volume intensity normalization alone
+      insufficient for it (`RESOURCES.md`). Fit harmonization parameters
+      on controls only (their leakage-avoidance detail) before applying to
+      patients. Not directly applicable to the 3D-CNN track (ComBat
+      operates on scalar features, not raw voxel grids).
+      **Gate passed 2026-09-08** in `notebooks/04_combat_harmonization.ipynb`
+      (reused `baseline_features.csv`, no new `.nii.gz` access, 5 seeds,
+      same fold loop as `03`): `combined + ComBat` 0.5290 vs. `combined`
+      (no ComBat, same-run-recomputed) 0.5753 — **delta -0.0462, ~40-80x
+      this run's own per-variant sd (0.0006-0.0011)**, far outside noise.
+      Parametric empirical-Bayes ComBat (Johnson et al. 2007,
+      `RESOURCES.md`), batch = in-plane spacing family (the confound EDA
+      3a found significant, χ²=24.54, p=0.00042), fit on each fold's
+      training-set controls only — matches the Frontiers 2022 PPMI
+      leakage-avoidance precedent. **Wired into `src/model.py`** as
+      `ComBatHarmonizedPipeline`/`build_combat_baseline()` (TDD,
+      `tests/test_model.py`, 4 new tests — fits/predicts valid
+      probabilities, fits ComBat on controls only, handles unseen-batch
+      rows at predict time, fresh instance per call; 28/28 project tests
+      pass). `build_combat_baseline()` is now the classical baseline to
+      actually use; `build_classical_baseline()` (no ComBat) stays as the
+      weaker reference point it beat.
 - [ ] Main track: 3D CNN on resampled volumes (training from scratch or a
       clearly-eligible pretrained backbone — see the ImageNet/PPMI caveat
       above).

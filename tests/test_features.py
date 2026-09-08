@@ -120,3 +120,68 @@ def test_striatal_ratio_matches_hand_computed_value():
     # mean(masked) / mean(all positive voxels) = 40 / ((8*40 + 8*10) / 16)
     expected = 40.0 / ((8 * 40.0 + 8 * 10.0) / 16)
     assert ratio == pytest.approx(expected)
+
+
+# --- fit_combat / apply_combat ----------------------------------------------
+
+def _batch_shifted_features(rng, n_per_batch=10, shift=5.0):
+    """Two batches, same within-batch spread, feature 0 offset by `shift`
+    between batches, feature 1 batch-invariant (nothing to harmonize)."""
+    a = rng.normal(loc=0.0, scale=0.2, size=(n_per_batch, 2))
+    b = rng.normal(loc=0.0, scale=0.2, size=(n_per_batch, 2))
+    a[:, 0] += 0.0
+    b[:, 0] += shift
+    X = np.vstack([a, b])
+    batch = np.array(["A"] * n_per_batch + ["B"] * n_per_batch)
+    return X, batch
+
+
+def test_apply_combat_removes_known_additive_batch_shift():
+    rng = np.random.RandomState(0)
+    X, batch = _batch_shifted_features(rng, n_per_batch=15, shift=5.0)
+
+    params = features.fit_combat(X, batch, min_batch_size=3)
+    adjusted = features.apply_combat(X, batch, params)
+
+    mean_a = adjusted[batch == "A", 0].mean()
+    mean_b = adjusted[batch == "B", 0].mean()
+    # Started ~5.0 apart; harmonization should collapse almost all of it.
+    assert abs(mean_a - mean_b) < 0.5
+
+
+def test_apply_combat_is_noop_with_a_single_batch():
+    rng = np.random.RandomState(0)
+    X = rng.normal(loc=3.0, scale=1.0, size=(20, 2))
+    batch = np.array(["only"] * 20)
+
+    params = features.fit_combat(X, batch, min_batch_size=3)
+    adjusted = features.apply_combat(X, batch, params)
+
+    assert params.no_op is True
+    np.testing.assert_array_equal(adjusted, X)
+
+
+def test_apply_combat_handles_singleton_rare_batch_without_crashing():
+    rng = np.random.RandomState(0)
+    X, batch = _batch_shifted_features(rng, n_per_batch=15, shift=5.0)
+    # A third batch with a single member -- too small to estimate its own
+    # variance, must collapse instead of crashing.
+    X = np.vstack([X, [[100.0, 100.0]]])
+    batch = np.concatenate([batch, ["C"]])
+
+    params = features.fit_combat(X, batch, min_batch_size=3)
+    adjusted = features.apply_combat(X, batch, params)
+
+    assert np.isfinite(adjusted).all()
+
+
+def test_apply_combat_maps_unseen_batch_to_a_finite_result():
+    rng = np.random.RandomState(0)
+    X, batch = _batch_shifted_features(rng, n_per_batch=15, shift=5.0)
+    params = features.fit_combat(X, batch, min_batch_size=3)
+
+    new_X = np.array([[1.0, 1.0], [2.0, 2.0]])
+    new_batch = np.array(["never_seen", "never_seen"])
+    adjusted = features.apply_combat(new_X, new_batch, params)
+
+    assert np.isfinite(adjusted).all()
