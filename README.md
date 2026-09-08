@@ -283,8 +283,41 @@ and `code-execution-submission.md` extensions).
       every file behaves like the clean 112. This closes the last blocker
       for `data.py`. Section 6d's `abs_asym`/`striatal_ratio` numbers used
       the same `TARGET_ML=20.0` mask and don't need to be re-run.
-- [ ] Pin down the evaluation harness (`src/evaluate.py`): log loss +
-      AUROC, Stratified K-Fold on `is_pathologic`.
+- [x] `src/evaluate.py` written (TDD, `tests/test_evaluate.py`, 11 tests,
+      clean pass): `log_loss_score` (the gated metric), `auroc_score` +
+      `expected_calibration_error` (diagnostics, per Chegodaev et al. in
+      `RESOURCES.md`), `combined_score`, and `make_folds` (Stratified
+      K-Fold jointly on target × in-plane-spacing family — rare families
+      collapsed to a "rare" bucket per target class, falling back to that
+      class's largest family if even "rare" would be unsplittable, so
+      `StratifiedKFold` never gets a cell smaller than `n_splits`).
+- [x] Noise floor measured in `notebooks/02_evaluate_noise_floor.ipynb`:
+      `evaluate.make_folds` + `evaluate.log_loss_score`, `abs_asym` alone,
+      5 seeds — **mean=0.6119, sd=0.0001** (matches section 6d's
+      single-split 0.6126, confirming `evaluate.py` reproduces it — the
+      harness works end-to-end on real data). **Caveat that matters**:
+      this is the floor for *this specific probe* (1 feature, 2-parameter
+      model, these folds) — a low-variance case by construction (strong,
+      stable single feature). It is **not** a universal threshold; the
+      classical baseline and especially the 3D-CNN (more parameters,
+      stochastic training) need their **own** noise-floor measurement once
+      built (`SKILL.md`: re-measure whenever fold structure, data, or
+      model class changes) — don't reuse `sd=0.0001` to judge their
+      deltas.
+      **Fold design:** Stratified K-Fold on `is_pathologic` **stratified
+      jointly with the in-plane-spacing family** (the proxy whose confound
+      is actually significant, p=0.00042 — not the (shape,spacing) proxy,
+      p=0.124). Rationale for stratify-by-source rather than
+      leave-one-site-out: all 20 smoke-test (shape,spacing) combos already
+      occur in training (EDA section 9), so the test set appears to draw
+      from the same centres, and `deep-learning-imaging.md` says to pick
+      the fold structure from the test set's actual composition. Because
+      metadata alone is worth only −0.0006 log loss, this is insurance
+      against uneven fold composition, not leak containment — so do **not**
+      pay for `GroupKFold` on the proxy (its largest group is 34% of the
+      data, which cannot be split 5 ways). Additionally run
+      leave-one-family-out once at rung 2 as a transfer check, and report
+      the scored metric per family, not only pooled.
 - [ ] Baseline: handcrafted/radiomics features + classical model.
 - [ ] Main track: 3D CNN on resampled volumes (training from scratch or a
       clearly-eligible pretrained backbone — see the ImageNet/PPMI caveat
