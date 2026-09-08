@@ -86,3 +86,35 @@ def test_crop_or_pad_zero_pads_when_target_exceeds_volume():
     assert padded.shape == (56, 30, 44)
     assert (padded[:, :, 0] == 0.0).all()  # padded edge
     assert (padded[:, :, 22] == 10.0).all()  # original data preserved near center
+
+
+def test_normalize_intensity_zero_means_the_foreground():
+    volume = np.zeros((10, 10, 10), dtype=np.float32)
+    volume[:5] = 100.0   # foreground half
+    volume[5:] = 0.0     # background half
+
+    normalized = data.normalize_intensity(volume, background_percentile=30,
+                                           background_max_fraction=0.05)
+
+    # Foreground (>threshold) voxels should be ~zero-mean.
+    assert normalized[:5].mean() == pytest.approx(0.0, abs=1e-4)
+
+
+def test_normalize_intensity_clips_negative_values_first():
+    """A handful of volumes are stored as int16, not uint16, and can carry
+    small negative artifacts (EDA section 5, `features.py`'s same
+    np.clip guard)."""
+    volume = np.array([[[-5.0, 10.0], [20.0, 30.0]]], dtype=np.float32)
+
+    normalized = data.normalize_intensity(volume)
+
+    assert np.isfinite(normalized).all()
+
+
+def test_normalize_intensity_handles_all_zero_volume():
+    volume = np.zeros((5, 5, 5), dtype=np.float32)
+
+    normalized = data.normalize_intensity(volume)
+
+    assert np.isfinite(normalized).all()
+    np.testing.assert_array_equal(normalized, volume)

@@ -13,6 +13,8 @@ import nibabel as nib
 import nibabel.processing as nibproc
 import numpy as np
 
+import config
+
 
 def resample_to_spacing(volume, affine, target_spacing, order=1):
     """Resample `volume` (+ its affine) to `target_spacing` mm, through
@@ -54,3 +56,29 @@ def crop_or_pad(volume, spacing, center_mm, target_shape):
         dst_slices.append(slice(dst_start, dst_end))
     out[tuple(dst_slices)] = volume[tuple(src_slices)]
     return out
+
+
+def normalize_intensity(volume, background_percentile=config.BACKGROUND_PERCENTILE,
+                         background_max_fraction=config.BACKGROUND_MAX_FRACTION):
+    """Background-aware per-volume z-score, computed on the *cropped*
+    volume. `np.clip(volume, 0, None)` first (16 volumes are stored as
+    int16, not uint16 -- EDA section 5, same guard as `features.py`).
+    Background threshold = min(percentile(volume, background_percentile),
+    background_max_fraction * volume.max()) -- the EDA-validated rule
+    already in `config.py` (adaptive, since a flat percentile cuts into
+    brain on tight-FOV volumes). z-score uses the foreground
+    (above-threshold) voxels' mean/std, applied to the whole volume.
+    """
+    volume = np.clip(volume, 0, None).astype(np.float32)
+    if volume.max() <= 0:
+        return volume  # degenerate all-zero volume; nothing to normalize
+    threshold = min(np.percentile(volume, background_percentile),
+                     background_max_fraction * volume.max())
+    foreground = volume[volume > threshold]
+    if foreground.size == 0:
+        foreground = volume.ravel()
+    mean = foreground.mean()
+    std = foreground.std()
+    if std <= 0:
+        std = 1.0
+    return (volume - mean) / std
