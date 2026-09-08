@@ -4,7 +4,13 @@ channels:
   - defaults
 dependencies:
   - python=3.12
-  - numpy
+  - numpy<2.3       # nibabel 5.4.2 crashes (native access violation, no
+                     # traceback) constructing Nifti1Image under numpy>=2.5;
+                     # verified 2.2.6 works. Re-check if nibabel is upgraded.
+  - libblas=*=*openblas  # forces OpenBLAS instead of MKL. This env had both
+                     # MKL and libgomp (GNU OpenMP) DLLs loaded at once --
+                     # any BLAS call (even a bare 4x4 matmul) crashed
+                     # natively. OpenBLAS avoids the runtime clash entirely.
   - pandas
   - scipy
   - scikit-learn
