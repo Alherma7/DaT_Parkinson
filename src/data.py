@@ -82,3 +82,18 @@ def normalize_intensity(volume, background_percentile=config.BACKGROUND_PERCENTI
     if std <= 0:
         std = 1.0
     return (volume - mean) / std
+
+
+def load_volume(uid):
+    """Load, resample, crop, and normalize the volume for `uid`. Returns
+    a `(1, *config.TARGET_SHAPE)` float32 array -- the single function
+    both training and inference call, never reimplemented in the
+    inference path.
+    """
+    path = config.NIFTI_DIR / f"{uid}.nii.gz"
+    img = nib.load(str(path))
+    resampled, _ = resample_to_spacing(img.get_fdata(), img.affine, config.TARGET_SPACING)
+    cropped = crop_or_pad(resampled, config.TARGET_SPACING, config.CROP_CENTER_MM,
+                           config.TARGET_SHAPE)
+    normalized = normalize_intensity(cropped)
+    return normalized[np.newaxis, ...].astype(np.float32)

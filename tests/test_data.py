@@ -118,3 +118,20 @@ def test_normalize_intensity_handles_all_zero_volume():
 
     assert np.isfinite(normalized).all()
     np.testing.assert_array_equal(normalized, volume)
+
+
+def test_load_volume_returns_target_shape_with_channel_dim(tmp_path, monkeypatch):
+    import nibabel as nib
+
+    volume = np.zeros((60, 60, 40), dtype=np.float32)
+    volume[25:35, 25:35, 15:25] = 500.0
+    affine = np.eye(4) * 2.46
+    affine[3, 3] = 1.0
+    nib.save(nib.Nifti1Image(volume, affine), tmp_path / "synthetic_uid.nii.gz")
+    monkeypatch.setattr(data.config, "NIFTI_DIR", tmp_path)
+
+    out = data.load_volume("synthetic_uid")
+
+    assert out.shape == (1, *data.config.TARGET_SHAPE)
+    assert out.dtype == np.float32
+    assert np.isfinite(out).all()
