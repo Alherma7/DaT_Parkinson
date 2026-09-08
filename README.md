@@ -226,6 +226,17 @@ and `code-execution-submission.md` extensions).
   Laptop, 8GB). The PyPI `torch` wheel defaults to CPU-only; the CUDA build
   needs `--extra-index-url https://download.pytorch.org/whl/cu126` pinned
   in `environment.yml` (cu121/cu124 don't publish this torch release).
+- 2026-09-08: **Fixed a BLAS/OpenMP runtime crash in `dat-parkinson`**,
+  found while checking `nibabel.processing`'s API ahead of the CNN
+  data-plumbing plan: any BLAS call (even a bare 4x4 `@` matmul) crashed
+  the process natively (access violation, no Python traceback) — the env
+  had both MKL and libgomp (GNU OpenMP) DLLs loaded at once, a known
+  Windows conda clash. Also, independently, nibabel 5.4.2's
+  `Nifti1Image(data, affine)` crashes under numpy>=2.5 (verified 2.2.6
+  works). Fixed in `environment.yml`: `numpy<2.3` + `libblas=*=*openblas`.
+  Verified from a fully fresh `conda env create`: nibabel construction +
+  `resample_to_output`, scipy, scikit-learn, torch+CUDA all work, 28/28
+  project tests pass.
 
 ## Next steps
 
