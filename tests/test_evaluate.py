@@ -106,3 +106,50 @@ def test_make_folds_handles_singleton_rare_families_without_crashing():
     folds = evaluate.make_folds(target, family, n_splits=5, random_state=42)
 
     assert len(folds) == 5
+
+
+# --- paired_bootstrap_ci -----------------------------------------------
+
+def test_paired_bootstrap_ci_is_zero_width_when_predictions_are_identical():
+    rng = np.random.RandomState(0)
+    y_true = rng.binomial(1, 0.5, size=50)
+    probs = rng.uniform(0.1, 0.9, size=50)
+
+    ci_low, ci_high = evaluate.paired_bootstrap_ci(y_true, probs, probs, seed=42)
+
+    assert ci_low == pytest.approx(0.0)
+    assert ci_high == pytest.approx(0.0)
+
+
+def test_paired_bootstrap_ci_favors_the_clearly_better_predictions():
+    y_true = np.array([0, 1] * 25)
+    probs_a = np.array([0.05, 0.95] * 25)  # confidently correct
+    probs_b = np.array([0.5, 0.5] * 25)  # uninformative
+
+    ci_low, ci_high = evaluate.paired_bootstrap_ci(y_true, probs_a, probs_b, seed=42)
+
+    # delta = log_loss(a) - log_loss(b); a is better so delta is negative throughout
+    assert ci_high < 0
+
+
+def test_paired_bootstrap_ci_is_reproducible_with_same_seed():
+    rng = np.random.RandomState(1)
+    y_true = rng.binomial(1, 0.5, size=50)
+    probs_a = rng.uniform(0.1, 0.9, size=50)
+    probs_b = rng.uniform(0.1, 0.9, size=50)
+
+    result_1 = evaluate.paired_bootstrap_ci(y_true, probs_a, probs_b, seed=7)
+    result_2 = evaluate.paired_bootstrap_ci(y_true, probs_a, probs_b, seed=7)
+
+    assert result_1 == result_2
+
+
+def test_paired_bootstrap_ci_low_does_not_exceed_high():
+    rng = np.random.RandomState(2)
+    y_true = rng.binomial(1, 0.5, size=50)
+    probs_a = rng.uniform(0.1, 0.9, size=50)
+    probs_b = rng.uniform(0.1, 0.9, size=50)
+
+    ci_low, ci_high = evaluate.paired_bootstrap_ci(y_true, probs_a, probs_b, seed=42)
+
+    assert ci_low <= ci_high

@@ -71,6 +71,28 @@ def _collapse_rare_families(target, family, min_size):
     return collapsed
 
 
+def paired_bootstrap_ci(y_true, probs_a, probs_b, seed, n_bootstrap=1000):
+    """95% CI (percentile method) of log_loss(a) - log_loss(b) under paired
+    bootstrap resampling of rows (Varoquaux 2018). Negative values favor a.
+
+    Returns (ci_low, ci_high).
+    """
+    y_true = np.asarray(y_true)
+    probs_a = np.asarray(probs_a)
+    probs_b = np.asarray(probs_b)
+
+    rng = np.random.RandomState(seed)
+    n = len(y_true)
+    deltas = np.empty(n_bootstrap)
+    for b in range(n_bootstrap):
+        idx = rng.randint(0, n, size=n)
+        deltas[b] = (log_loss_score(y_true[idx], probs_a[idx])
+                     - log_loss_score(y_true[idx], probs_b[idx]))
+
+    ci_low, ci_high = np.percentile(deltas, [2.5, 97.5])
+    return float(ci_low), float(ci_high)
+
+
 def make_folds(target, family, n_splits=config.N_FOLDS, random_state=config.RANDOM_STATE):
     """Stratified K-Fold jointly on target and in-plane-spacing family.
 

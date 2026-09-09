@@ -237,6 +237,29 @@ and `code-execution-submission.md` extensions).
   Verified from a fully fresh `conda env create`: nibabel construction +
   `resample_to_output`, scipy, scikit-learn, torch+CUDA all work, 28/28
   project tests pass.
+- 2026-09-09: **Rung 3 gate PASSED** in `notebooks/07_cnn_rung3.ipynb`:
+  5-fold × 5-repeat nested-CV CNN, mean log loss **0.4520** (sd 0.0097)
+  vs. `build_combat_baseline()` at 0.5290 — paired bootstrap 95% CI of the
+  delta fully negative ([-0.1041, -0.0351]), clears the 2×-noise-threshold
+  gate by 0.0770 vs. 0.0218. Per-family log loss worst on the 2.46mm
+  (0.5191) and 3.895mm (0.5035) families, best on 2.30mm (0.3177).
+  **3D CNN is now the winning track.** Note: `notebooks/06_cnn_rung2.ipynb`'s
+  batch/LR sweep and LOFO transfer-check cells didn't survive the run
+  (only the cache-build and helper-def cells remain on disk); rung 3 used
+  `batch=32, lr=2e-3` without an on-record confirmation of the winner —
+  left as-is since rung 3 cleared the gate with a wide margin anyway.
+  - **Final model decided: CNN+baseline blend at w_cnn=0.70**, not the
+    CNN alone. The notebook's original 3-point grid check (w=0.25/0.5/0.75)
+    was a cheap fallback, not a validated choice; added a leave-one-
+    repeat-out cell (`src/evaluate.py::paired_bootstrap_ci`, TDD) that
+    picks the weight on 4 of the 5 CNN OOF repeats and scores it on the
+    held-out one, so no weight is ever evaluated on the data used to
+    select it. **w_cnn=0.70 was selected unanimously in all 5 LOFO
+    folds.** Honest blend mean log loss 0.4250 (sd 0.0099) vs. CNN-alone
+    0.4520 (sd 0.0109) — beats it by +0.0271, above the 2×-noise
+    threshold (0.0218); paired bootstrap 95% CI on the blend-vs-CNN delta
+    [-0.0354, -0.0106], fully negative. **`main.py` must run both
+    models and blend their probabilities at w_cnn=0.70.**
 
 ## Next steps
 
@@ -390,10 +413,11 @@ and `code-execution-submission.md` extensions).
       pass). `build_combat_baseline()` is now the classical baseline to
       actually use; `build_classical_baseline()` (no ComBat) stays as the
       weaker reference point it beat.
-- [ ] Main track: 3D CNN on resampled volumes (training from scratch or a
-      clearly-eligible pretrained backbone — see the ImageNet/PPMI caveat
-      above).
+- [x] Main track: 3D CNN on resampled volumes — see Progress above
+      (2026-09-09). **Gate passed; final model is a CNN+`build_combat_baseline()`
+      blend at w_cnn=0.70**, not the CNN alone.
 - [ ] `RESOURCES.md`: log every technique and every external
       data/pretrained-model candidate as it's considered.
-- [ ] Submission packaging + local Docker rehearsal once a model clears
-      the gate.
+- [ ] Submission packaging (`main.py`: CNN ensemble inference +
+      `build_combat_baseline()` refit on 100% of labeled training data +
+      blend at w_cnn=0.70) + local Docker rehearsal.
