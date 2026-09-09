@@ -108,6 +108,33 @@ def test_make_folds_handles_singleton_rare_families_without_crashing():
     assert len(folds) == 5
 
 
+# --- family_oversample_weights ------------------------------------------
+
+def test_family_oversample_weights_boosts_only_named_families():
+    family = np.array(["2.46", "2.30", "3.895", "2.30"])
+
+    weights = evaluate.family_oversample_weights(family, boosted_families=["2.46", "3.895"], boost_factor=2.0)
+
+    np.testing.assert_array_equal(weights, [2.0, 1.0, 2.0, 1.0])
+
+
+def test_family_oversample_weights_defaults_boost_factor_to_one_when_unboosted():
+    family = ["a", "b", "c"]
+
+    weights = evaluate.family_oversample_weights(family, boosted_families=[], boost_factor=5.0)
+
+    np.testing.assert_array_equal(weights, [1.0, 1.0, 1.0])
+
+
+def test_family_oversample_weights_returns_float_array_matching_input_length():
+    family = ["a"] * 7
+
+    weights = evaluate.family_oversample_weights(family, boosted_families=["a"], boost_factor=3.0)
+
+    assert weights.dtype == np.float64
+    assert len(weights) == 7
+
+
 # --- paired_bootstrap_ci -----------------------------------------------
 
 def test_paired_bootstrap_ci_is_zero_width_when_predictions_are_identical():

@@ -93,6 +93,21 @@ def paired_bootstrap_ci(y_true, probs_a, probs_b, seed, n_bootstrap=1000):
     return float(ci_low), float(ci_high)
 
 
+def family_oversample_weights(family, boosted_families, boost_factor):
+    """Per-sample weight for `torch.utils.data.WeightedRandomSampler`:
+    `boost_factor` for rows whose `inplane_family` is in
+    `boosted_families`, 1.0 for every other row.
+
+    Targets specific underperforming families directly (rung 3's own
+    per-family log loss breakdown, README.md) rather than a continuous
+    function of every family's noisy per-family score -- several
+    families have n<10, too few to trust a smooth weighting by their own
+    log loss.
+    """
+    family = np.asarray(family, dtype=object)
+    return np.where(np.isin(family, list(boosted_families)), boost_factor, 1.0)
+
+
 def make_folds(target, family, n_splits=config.N_FOLDS, random_state=config.RANDOM_STATE):
     """Stratified K-Fold jointly on target and in-plane-spacing family.
 
