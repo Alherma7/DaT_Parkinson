@@ -206,3 +206,28 @@ def test_inplane_family_boundary_lower_inclusive_upper_exclusive():
 
 def test_inplane_family_boundary_between_adjacent_ranges():
     assert features.inplane_family(1.50) == "~1.5-1.8"
+
+
+# --- extract_baseline_features -----------------------------------------------
+
+def test_extract_baseline_features_returns_all_three_keys():
+    volume = _blank_volume()
+    spacing = (2.0, 2.0, 2.0)
+    volume[5:8, 13:17, 8:12] = 1000.0
+    volume[22:25, 13:17, 8:12] = 500.0  # asymmetric on purpose
+
+    result = features.extract_baseline_features(volume, spacing, target_ml=0.5)
+
+    assert result is not None
+    assert set(result.keys()) == {"abs_asym", "striatal_ratio", "inplane_family"}
+    assert result["abs_asym"] > 0  # asymmetric blobs -> nonzero
+    assert result["inplane_family"] == "2.00"
+
+
+def test_extract_baseline_features_returns_none_for_empty_volume():
+    volume = _blank_volume()
+    spacing = (2.0, 2.0, 2.0)
+
+    result = features.extract_baseline_features(volume, spacing, target_ml=0.5)
+
+    assert result is None

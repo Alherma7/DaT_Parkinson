@@ -250,6 +250,26 @@ def striatal_ratio(volume, mask):
     return masked_mean / (background_mean + 1e-9)
 
 
+def extract_baseline_features(volume, spacing, target_ml=20.0):
+    """(abs_asym, striatal_ratio, inplane_family) for one already-loaded
+    volume, or None if the striatum mask is degenerate (mirrors
+    notebooks/03_baseline_classical.ipynb's skip condition). A caller
+    that gets None for a row should treat that feature as missing, not
+    silently zero-fill it.
+    """
+    mask = striatum_mask(volume, spacing, target_ml=target_ml)
+    if mask is None:
+        return None
+    signed = signed_asymmetry(volume, mask, spacing)
+    if signed is None:
+        return None
+    return {
+        "abs_asym": abs(signed),
+        "striatal_ratio": striatal_ratio(volume, mask),
+        "inplane_family": inplane_family(spacing[0]),
+    }
+
+
 def inplane_family(spacing_x):
     """Buckets an in-plane voxel spacing (mm, `img.header.get_zooms()[0]`)
     into the same named families used throughout this project's fold
