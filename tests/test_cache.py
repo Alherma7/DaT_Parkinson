@@ -88,3 +88,29 @@ def test_missing_fingerprint_file_triggers_rebuild_even_if_others_exist(tmp_path
     calls_second = []
     CachedVolumeStore(uids, cache_dir, {"v": 1}, load_fn=make_load_fn(calls_second))
     assert sorted(calls_second) == sorted(uids)
+
+
+# --- was_reused ---------------------------------------------------------
+
+def test_was_reused_is_false_on_first_build(tmp_path):
+    store = CachedVolumeStore(["a", "b"], tmp_path / "cache", {"v": 1}, load_fn=make_load_fn([]))
+
+    assert store.was_reused is False
+
+
+def test_was_reused_is_true_when_disk_cache_matches(tmp_path):
+    cache_dir = tmp_path / "cache"
+    CachedVolumeStore(["a", "b"], cache_dir, {"v": 1}, load_fn=make_load_fn([]))
+
+    second = CachedVolumeStore(["a", "b"], cache_dir, {"v": 1}, load_fn=make_load_fn([]))
+
+    assert second.was_reused is True
+
+
+def test_was_reused_is_false_when_fingerprint_mismatch_forces_rebuild(tmp_path):
+    cache_dir = tmp_path / "cache"
+    CachedVolumeStore(["a", "b"], cache_dir, {"v": 1}, load_fn=make_load_fn([]))
+
+    second = CachedVolumeStore(["a", "b"], cache_dir, {"v": 2}, load_fn=make_load_fn([]))
+
+    assert second.was_reused is False

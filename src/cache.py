@@ -19,7 +19,9 @@ class CachedVolumeStore:
     disk (e.g. TARGET_SHAPE changed) or the uid set differs. `load_fn` is
     injected (default `data.load_volume`) so this is testable against a
     fake loader returning synthetic arrays -- never real patient data in
-    tests.
+    tests. `was_reused` (bool) records which happened, so a caller can
+    print/log whether this session paid the full preprocessing cost
+    again without guessing from wall-clock time alone.
     """
 
     def __init__(self, uids, cache_dir, config_fingerprint, load_fn=None):
@@ -35,7 +37,8 @@ class CachedVolumeStore:
         self._config_fingerprint = json.loads(json.dumps(config_fingerprint))
         self._uid_to_row = {}
         self._array = None
-        if self._on_disk_matches():
+        self.was_reused = self._on_disk_matches()
+        if self.was_reused:
             self._load_from_disk()
         else:
             self._build()
