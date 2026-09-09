@@ -100,7 +100,11 @@ def load_volume(uid):
     normalized = normalize_intensity(cropped)
     foreground_fraction = float(np.mean(np.abs(normalized) > 1e-6))
     if foreground_fraction < 0.01 or normalized.std() <= 1e-6:
-        warnings.warn(
-            f"load_volume({uid!r}): degenerate/near-empty volume after preprocessing"
-        )
+        # Never include `uid` in this message: load_volume() runs inside
+        # submission_src/main.py against real competition test volumes,
+        # and the platform scans submission logs for per-sample test-set
+        # information and disqualifies on it -- a caller that already has
+        # `uid` (every caller does, it's the argument) can pair it with
+        # this warning itself if per-uid debugging is needed locally.
+        warnings.warn("degenerate/near-empty volume after preprocessing")
     return normalized[np.newaxis, ...].astype(np.float32)

@@ -150,3 +150,26 @@ def test_load_volume_warns_on_degenerate_all_zero_volume(tmp_path, monkeypatch):
         out = data.load_volume("degenerate_uid")
 
     assert out.shape == (1, *data.config.TARGET_SHAPE)
+
+
+def test_load_volume_degenerate_warning_never_names_the_uid(tmp_path, monkeypatch):
+    """Regression guard: submission_src/main.py runs this exact function
+    against real test volumes, and the competition platform scans
+    submission logs for per-sample test-set information and disqualifies
+    on it (confirmed 2026-09-09: a real full-submission run got two log
+    lines auto-filtered as forbidden content because this warning used
+    to embed the uid). The warning must stay uid-free in every context.
+    """
+    import nibabel as nib
+
+    volume = np.zeros((60, 60, 40), dtype=np.float32)
+    affine = np.eye(4) * 2.46
+    affine[3, 3] = 1.0
+    secret_uid = "some_real_test_patient_uid"
+    nib.save(nib.Nifti1Image(volume, affine), tmp_path / f"{secret_uid}.nii.gz")
+    monkeypatch.setattr(data.config, "NIFTI_DIR", tmp_path)
+
+    with pytest.warns(UserWarning) as recorded:
+        data.load_volume(secret_uid)
+
+    assert all(secret_uid not in str(w.message) for w in recorded)
