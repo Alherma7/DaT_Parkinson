@@ -264,6 +264,77 @@ this project gets an entry here before it's used, per the
   and is a candidate to revisit if the threshold-based crop proves
   unreliable once actually run.
 
+**Training/validation methodology for the CNN track** (Opus research pass,
+2026-09-09, ahead of `docs/superpowers/specs/2026-09-09-cnn-train-rung23-design.md`):
+
+- **Malladi et al. 2022** (arXiv:2205.10287, "On the SDEs and Scaling Rules
+  for Adaptive Gradient Algorithms") — derives that Adam's step size should
+  scale with **sqrt(batch ratio)**, not linearly (Goyal et al.'s SGD rule).
+  Why: directly sets the LR when moving `config.BATCH_SIZE` off 8 (8→32
+  implies LR 1e-3→2e-3, not 4e-3) — using the SGD linear rule here would
+  have been wrong.
+- **Goyal et al. 2017** (arXiv:1706.02677, "Accurate, Large Minibatch SGD")
+  — the linear LR-scaling rule, SGD-specific, regime starts ~batch 256+.
+  Why: logged mainly to record why it does *not* apply here (Adam, small
+  batch range) — a wrong-but-tempting default.
+- **Masters & Luschi 2018** (arXiv:1804.07612, "Revisiting Small Batch
+  Training for Deep Neural Networks") — best results found in batch 2-32;
+  the stable-LR range narrows as batch grows past that.
+  Why: caps the batch increase for `DatCNN` at 32, not higher, independent
+  of the sqrt-LR-rule argument.
+- **Wu & He 2018** (arXiv:1803.08494, "Group Normalization") — documents
+  BatchNorm's batch-statistics noise rising sharply below ~16 samples/batch.
+  Why: `DatCNN` uses `BatchNorm3d` in every block; this is a second,
+  independent reason (besides throughput) that `config.BATCH_SIZE=8` is a
+  bad default and 32 is a better one.
+- **Varoquaux 2018** (arXiv:1706.07581, NeuroImage, "Cross-validation
+  failure: small sample sizes lead to large error bars") — the across-fold
+  standard deviation of a CV metric systematically underestimates the true
+  error bar, worse for nonlinear metrics and small N.
+  Why: rules out using the 5-fold sd alone as the CNN's noise floor for the
+  rung-3 gate decision (naively reusing the classical baseline's
+  sd=0.0006-0.0011 approach); need a paired bootstrap + seed-repeats
+  instead (see the rung 2/3 spec).
+- **Bouthillier et al. 2021** (arXiv:2103.03098, MLSys, "Accounting for
+  Variance in Machine Learning Benchmarks") — randomizing multiple sources
+  of variation (init seed + fold seed together) at a fixed compute budget
+  approaches the ideal variance estimator far better than repeating one
+  source alone.
+  Why: rung 3's 5-seed noise-floor repeats vary both the model-init seed
+  and `make_folds`' `random_state` together, per this finding, not just one
+  of them.
+- **Nadeau & Bengio 2003** (Machine Learning 52, "Inference for the
+  Generalization Error") — corrected resampled t-test variance estimator
+  for a single CV run, inflating naive fold variance by
+  `1/k + n_test/n_train`.
+  Why: fallback variance estimate if a single CV run must be judged without
+  time for seed-repeats.
+- **RSNA / Radiology:AI, "A Guide to Cross-Validation for AI in Medical
+  Imaging"** (PMC10388213) — leave-one-institution-out is typically
+  pessimistic vs. k-fold; recommends nested CV (inner split for model
+  selection/early stopping, outer fold purely held out) to avoid selection
+  optimism.
+  Why: motivated the nested-CV design in the rung 2/3 spec — the original
+  draft picked the best epoch/checkpoint using the same fold it then scored
+  the gate on, which is optimistically biased and not comparable to
+  `build_combat_baseline()` (a LogisticRegression with no per-fold model
+  selection at all).
+- **The Impact of Scanner Domain Shift on DL Performance in Medical
+  Imaging** (arXiv:2409.04368) and **Domain Generalization Mitigates
+  Scanner-Induced Domain Shift** (J Imaging Inform Med,
+  10.1007/s10278-026-02082-z) — both use a single dissimilar held-out
+  center as a cheap proxy for a full leave-one-site-out CV, rather than
+  iterating every site.
+  Why: supports rung 2's single-family leave-one-family-out design (one
+  family, not all 17) as a reasonable cheap probe, not an under-scoped one.
+- **Wenzel et al. 2019** (already logged above) resolution-transfer
+  asymmetry finding directly decided *which* family to hold out in rung 2:
+  the 3.895mm family (100% oblique, the coarsest resolution, `config.py`'s
+  own comment flags it as "interpolated UP, must be revisited if it
+  underperforms"), not the largest 2.46mm family — holding out 2.46mm
+  would test the transfer direction Wenzel et al. already found working
+  well (0.945 accuracy), telling us nothing new.
+
 ## Comparable projects
 
 - **mtwenzel/parkinson-classification** (GitHub) — fine-tunes Inception V3
