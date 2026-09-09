@@ -38,6 +38,7 @@ submission_src/
 ├── model.py                 # copy of src/model.py, unchanged
 ├── features.py              # copy of src/features.py + one new function
 ├── dataset.py                # copy of src/dataset.py, unchanged
+├── submission.py             # copy of src/submission.py, holds combine_predictions
 └── model_assets/
     ├── checkpoints/
     │   └── rung3_seed{42-46}_fold{0-4}.pt   # 25 files, copied as-is

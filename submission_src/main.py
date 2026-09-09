@@ -8,6 +8,7 @@ feature values) -- only aggregate counts and phase timings, per this
 competition's submission checklist and this project's own
 AI-assistant data rule.
 """
+import sys
 import time
 from pathlib import Path
 
@@ -15,6 +16,8 @@ import nibabel as nib
 import numpy as np
 import pandas as pd
 import torch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config
 import data
@@ -29,6 +32,7 @@ SUBMISSION_FORMAT_PATH = DATA_DIR / "submission_format.csv"
 WRITE_SUBMISSION_PATH = Path("submission.csv")
 MODEL_ASSETS = Path(__file__).parent / "model_assets"
 CNN_WEIGHT = 0.70  # README.md, 2026-09-09 leave-one-repeat-out result
+DEVICE = config.DEVICE if torch.cuda.is_available() else "cpu"
 
 
 def run_cnn_ensemble(uids):
@@ -42,8 +46,15 @@ def run_cnn_ensemble(uids):
     of repeating it 25x per volume. Returns {uid: probability}.
     """
     checkpoint_dir = MODEL_ASSETS / "checkpoints"
-    checkpoint_paths = sorted(checkpoint_dir.glob("*.pt"))
-    print(f"CNN ensemble: {len(checkpoint_paths)} checkpoints, {len(uids)} test volumes")
+    expected = model.rung3_checkpoint_filenames()
+    checkpoint_paths = [checkpoint_dir / name for name in expected]
+    missing = [p.name for p in checkpoint_paths if not p.exists()]
+    if missing:
+        raise FileNotFoundError(
+            f"{len(missing)}/{len(expected)} rung-3 checkpoints missing from {checkpoint_dir} "
+            "-- did scripts/build_submission_assets.py run, and did model_assets/ get zipped?"
+        )
+    print(f"CNN ensemble: {len(checkpoint_paths)} checkpoints, {len(uids)} test volumes, device={DEVICE}")
 
     volume_cache = {}
 
@@ -56,8 +67,8 @@ def run_cnn_ensemble(uids):
     summed = np.zeros(len(uids))
     for i, checkpoint_path in enumerate(checkpoint_paths):
         start = time.time()
-        net = model.build_model().to(config.DEVICE)
-        net.load_state_dict(torch.load(checkpoint_path, map_location=config.DEVICE))
+        net = model.build_model().to(DEVICE)
+        net.load_state_dict(torch.load(checkpoint_path, map_location=DEVICE))
         loader = torch.utils.data.DataLoader(ds, batch_size=config.BATCH_SIZE, num_workers=0)
         probs = []
         for x, _ in loader:
@@ -118,6 +129,7 @@ def main():
     cnn_probs = run_cnn_ensemble(uids)
     baseline_probs = run_classical_baseline(uids)
     predictions = submission.combine_predictions(uids, cnn_probs, baseline_probs, CNN_WEIGHT)
+    predictions = np.clip(predictions, 1e-6, 1 - 1e-6)
 
     out = submission_format.copy()
     out[config.TARGET_COLUMN] = predictions

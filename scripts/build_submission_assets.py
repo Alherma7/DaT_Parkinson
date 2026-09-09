@@ -16,7 +16,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+import numpy
 import pandas as pd
+import sklearn
+import torch
 
 import config
 import model
@@ -72,9 +75,12 @@ def main():
     copy_modules()
     copy_checkpoints()
     fit_and_pickle_baseline()
-    print(f"\nsubmission_src/ ready at {SUBMISSION_SRC}. "
-          "main.py is committed separately -- copy or symlink it in "
-          "before running `just pack-submission`.")
+    print(f"local versions: torch={torch.__version__}, sklearn={sklearn.__version__}, "
+          f"numpy={numpy.__version__} -- diff these against the runtime repo's uv.lock "
+          "(torch==2.12.1+cu129 there) before packing submission.zip.")
+    main_py_status = "present" if (SUBMISSION_SRC / "main.py").exists() else "MISSING -- expected at submission_src/main.py"
+    print(f"\nsubmission_src/ ready at {SUBMISSION_SRC} "
+          f"(main.py: {main_py_status}).")
 
 
 if __name__ == "__main__":
