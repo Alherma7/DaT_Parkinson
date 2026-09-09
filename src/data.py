@@ -14,6 +14,8 @@ import warnings
 import nibabel as nib
 import nibabel.processing as nibproc
 import numpy as np
+from scipy import ndimage
+from skimage.restoration import denoise_nl_means
 
 import config
 
@@ -86,17 +88,57 @@ def normalize_intensity(volume, background_percentile=config.BACKGROUND_PERCENTI
     return (volume - mean) / std
 
 
+def _estimate_noise_sigma(volume):
+    """Robust per-volume noise-sigma estimate: median absolute deviation
+    of a Laplacian-filtered volume, scaled to a normal-distribution sigma
+    (the standard MAD-to-sigma constant, 1/0.6745 -- Donoho & Johnstone
+    1994's wavelet-domain estimator uses the same constant on a detail
+    coefficient; a Laplace high-pass filter is the dependency-free
+    equivalent here).
+
+    Deliberately NOT `skimage.restoration.estimate_sigma`: that function
+    requires PyWavelets, which is not in the DrivenData runtime's
+    `uv.lock` (checked 2026-09-09) -- using it here would crash
+    `submission_src/main.py` if this experiment is ever promoted to
+    production, since `data.py` is the exact code that runs there.
+    """
+    laplacian = ndimage.laplace(volume)
+    mad = np.median(np.abs(laplacian - np.median(laplacian)))
+    return float(mad / 0.6745)
+
+
+def denoise_volume(volume, patch_size=3, patch_distance=5):
+    """Patch-wise Non-Local-Means denoising (Boulkrinat et al. 2025,
+    RESOURCES.md's preprocessing pipeline step 3), applied to the
+    resampled+cropped volume, before intensity normalization.
+    `_estimate_noise_sigma` picks the noise-strength parameter `h` per
+    volume (no fixed constant -- noise scale varies by scanner family,
+    same reasoning as `normalize_intensity`'s adaptive background
+    threshold). `channel_axis=None` throughout -- a single-channel 3D
+    volume, not a multi-channel image.
+    """
+    sigma_est = _estimate_noise_sigma(volume)
+    return denoise_nl_means(volume, h=1.15 * sigma_est, patch_size=patch_size,
+                             patch_distance=patch_distance, channel_axis=None,
+                             fast_mode=True)
+
+
 def load_volume(uid):
-    """Load, resample, crop, and normalize the volume for `uid`. Returns
-    a `(1, *config.TARGET_SHAPE)` float32 array -- the single function
-    both training and inference call, never reimplemented in the
-    inference path.
+    """Load, resample, crop, (optionally denoise,) and normalize the
+    volume for `uid`. Returns a `(1, *config.TARGET_SHAPE)` float32
+    array -- the single function both training and inference call, never
+    reimplemented in the inference path. `config.USE_NLM_DENOISING`
+    (default `False` -- rung-4 experiment 5, not yet gate-validated)
+    gates the denoising step; flipping it is the only change needed to
+    promote or revert the experiment, no separate code path to drift.
     """
     path = config.NIFTI_DIR / f"{uid}.nii.gz"
     img = nib.load(str(path))
     resampled, _ = resample_to_spacing(img.get_fdata(), img.affine, config.TARGET_SPACING)
     cropped = crop_or_pad(resampled, config.TARGET_SPACING, config.CROP_CENTER_MM,
                            config.TARGET_SHAPE)
+    if config.USE_NLM_DENOISING:
+        cropped = denoise_volume(cropped)
     normalized = normalize_intensity(cropped)
     foreground_fraction = float(np.mean(np.abs(normalized) > 1e-6))
     if foreground_fraction < 0.01 or normalized.std() <= 1e-6:

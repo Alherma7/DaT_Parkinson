@@ -16,6 +16,9 @@ dependencies:
   - scikit-learn
   - matplotlib
   - nibabel
+  - scikit-image  # rung-4 experiment 5 (NL-means denoising, RESOURCES.md's
+                  # Boulkrinat et al. 2025) -- confirmed present in the
+                  # DrivenData runtime's pyproject.toml, checked 2026-09-09
   - tqdm
   - pytest
   - jupyterlab

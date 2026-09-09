@@ -152,6 +152,65 @@ def test_load_volume_warns_on_degenerate_all_zero_volume(tmp_path, monkeypatch):
     assert out.shape == (1, *data.config.TARGET_SHAPE)
 
 
+# --- denoise_volume (rung-4 experiment 5) ------------------------------
+
+def _add_gaussian_noise(volume, sigma, seed):
+    rng = np.random.RandomState(seed)
+    return volume + rng.normal(scale=sigma, size=volume.shape).astype(np.float32)
+
+
+def test_denoise_volume_preserves_shape():
+    clean = np.zeros((12, 12, 12), dtype=np.float32)
+    clean[4:8, 4:8, 4:8] = 10.0
+    noisy = _add_gaussian_noise(clean, sigma=1.5, seed=0)
+
+    denoised = data.denoise_volume(noisy)
+
+    assert denoised.shape == noisy.shape
+
+
+def test_denoise_volume_reduces_noise_relative_to_the_clean_signal():
+    clean = np.zeros((14, 14, 14), dtype=np.float32)
+    clean[5:9, 5:9, 5:9] = 10.0
+    noisy = _add_gaussian_noise(clean, sigma=2.0, seed=1)
+
+    denoised = data.denoise_volume(noisy)
+
+    noisy_mse = float(np.mean((noisy - clean) ** 2))
+    denoised_mse = float(np.mean((denoised - clean) ** 2))
+    assert denoised_mse < noisy_mse
+
+
+def test_load_volume_applies_denoising_only_when_flag_is_enabled(tmp_path, monkeypatch):
+    import nibabel as nib
+
+    volume = np.zeros((60, 60, 40), dtype=np.float32)
+    rng = np.random.RandomState(2)
+    volume += rng.normal(scale=5.0, size=volume.shape).astype(np.float32)
+    volume[25:35, 25:35, 15:25] += 500.0
+    affine = np.eye(4) * 2.46
+    affine[3, 3] = 1.0
+    nib.save(nib.Nifti1Image(volume, affine), tmp_path / "noisy_uid.nii.gz")
+    monkeypatch.setattr(data.config, "NIFTI_DIR", tmp_path)
+
+    calls = []
+    real_denoise = data.denoise_volume
+
+    def spying_denoise(volume, *args, **kwargs):
+        calls.append(1)
+        return real_denoise(volume, *args, **kwargs)
+
+    monkeypatch.setattr(data, "denoise_volume", spying_denoise)
+
+    monkeypatch.setattr(data.config, "USE_NLM_DENOISING", False)
+    data.load_volume("noisy_uid")
+    assert calls == []
+
+    monkeypatch.setattr(data.config, "USE_NLM_DENOISING", True)
+    data.load_volume("noisy_uid")
+    assert calls == [1]
+
+
 def test_load_volume_degenerate_warning_never_names_the_uid(tmp_path, monkeypatch):
     """Regression guard: submission_src/main.py runs this exact function
     against real test volumes, and the competition platform scans

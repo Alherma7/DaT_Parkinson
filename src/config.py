@@ -110,6 +110,15 @@ INTENSITY_NORM = "per_volume_zscore"
 BACKGROUND_PERCENTILE = 30
 BACKGROUND_MAX_FRACTION = 0.05
 
+# Rung-4 experiment 5 (RESOURCES.md, Boulkrinat et al. 2025's
+# preprocessing step 3: patch-wise Non-Local-Means denoising, applied
+# after crop/before normalization -- data.py::denoise_volume). Off by
+# default -- not yet gate-validated against the current CNN
+# (notebooks/13_cnn_denoising.ipynb). Flipping this is the only change
+# needed to promote or revert the experiment; data.load_volume has no
+# separate denoising code path to drift from this flag.
+USE_NLM_DENOISING = False
+
 # --- Deep-learning defaults (see deep-learning-imaging.md); tune after
 # representation work, not before. ---------------------------------------------
 SEED = RANDOM_STATE
