@@ -77,3 +77,14 @@ def test_tuple_and_list_fingerprints_compare_equal(tmp_path):
     calls_second = []
     CachedVolumeStore(uids, cache_dir, {"shape": [56, 30, 44]}, load_fn=make_load_fn(calls_second))
     assert calls_second == []
+
+
+def test_missing_fingerprint_file_triggers_rebuild_even_if_others_exist(tmp_path):
+    uids = ["a", "b"]
+    cache_dir = tmp_path / "cache"
+    CachedVolumeStore(uids, cache_dir, {"v": 1}, load_fn=make_load_fn([]))
+    (cache_dir / "fingerprint.json").unlink()  # simulate interrupted rebuild
+
+    calls_second = []
+    CachedVolumeStore(uids, cache_dir, {"v": 1}, load_fn=make_load_fn(calls_second))
+    assert sorted(calls_second) == sorted(uids)

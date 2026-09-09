@@ -58,6 +58,11 @@ class CachedVolumeStore:
         self._array = np.load(self._array_path)
 
     def _build(self):
+        # Delete stale fingerprint at the start of rebuild. If this rebuild is
+        # interrupted, the missing fingerprint.json will cause _on_disk_matches()
+        # to correctly return False on next instantiation, preventing silent
+        # cache corruption from incomplete writes.
+        self._fingerprint_path.unlink(missing_ok=True)
         first = self.load_fn(self._uids[0])
         array = np.empty((len(self._uids), *first.shape), dtype=np.float32)
         array[0] = first
