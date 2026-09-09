@@ -185,3 +185,15 @@ def test_apply_combat_maps_unseen_batch_to_a_finite_result():
     adjusted = features.apply_combat(new_X, new_batch, params)
 
     assert np.isfinite(adjusted).all()
+
+
+# --- inplane_family ---------------------------------------------------------
+
+def test_inplane_family_buckets_known_spacings():
+    assert features.inplane_family(2.46) == "2.46"
+    assert features.inplane_family(3.895) == "3.895"
+    assert features.inplane_family(1.47) == "~1.47"
+
+
+def test_inplane_family_falls_back_for_unbucketed_spacing():
+    assert features.inplane_family(3.123) == "other(3.123)"

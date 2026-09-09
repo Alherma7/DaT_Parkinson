@@ -248,3 +248,22 @@ def striatal_ratio(volume, mask):
     positive = volume[volume > 0]
     background_mean = float(positive.mean()) if positive.size else 0.0
     return masked_mean / (background_mean + 1e-9)
+
+
+def inplane_family(spacing_x):
+    """Buckets an in-plane voxel spacing (mm, `img.header.get_zooms()[0]`)
+    into the same named families used throughout this project's fold
+    design (`evaluate.make_folds`), ComBat batching, and leave-one-family-
+    out checks (EDA section 3a, `notebooks/01_eda_volumes.ipynb`). Kept in
+    sync with `notebooks/03_baseline_classical.ipynb`'s own inline copy --
+    that notebook's already-recorded results are untouched, but new code
+    (rung 2/3) uses this version instead of duplicating it again.
+    """
+    for lo, hi, name in [(1.40, 1.50, "~1.47"), (1.50, 1.80, "~1.5-1.8"),
+                         (1.99, 2.01, "2.00"), (2.29, 2.31, "2.30"),
+                         (2.39, 2.41, "2.398"), (2.45, 2.47, "2.46"),
+                         (3.28, 3.32, "~3.30"), (3.58, 3.60, "3.591"),
+                         (3.88, 3.90, "3.895"), (4.41, 4.43, "4.42")]:
+        if lo <= spacing_x < hi:
+            return name
+    return f"other({spacing_x:.3f})"
