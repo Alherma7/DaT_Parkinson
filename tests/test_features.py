@@ -197,3 +197,12 @@ def test_inplane_family_buckets_known_spacings():
 
 def test_inplane_family_falls_back_for_unbucketed_spacing():
     assert features.inplane_family(3.123) == "other(3.123)"
+
+
+def test_inplane_family_boundary_lower_inclusive_upper_exclusive():
+    assert features.inplane_family(2.45) == "2.46"
+    assert features.inplane_family(2.47) == "other(2.470)"
+
+
+def test_inplane_family_boundary_between_adjacent_ranges():
+    assert features.inplane_family(1.50) == "~1.5-1.8"

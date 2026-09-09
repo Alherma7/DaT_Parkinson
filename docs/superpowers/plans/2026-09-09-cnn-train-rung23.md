@@ -720,7 +720,7 @@ Expected: PASS (5 tests)
 - [ ] **Step 5: Run the full project test suite**
 
 Run: `"/c/Users/alher/anaconda3/envs/dat-parkinson/python.exe" -m pytest tests/ -q`
-Expected: `59 passed` (46 pre-existing + 5 `test_cache.py` + 1 `test_dataset.py` addition + 2 `test_features.py` additions + 5 `test_train.py`)
+Expected: `61 passed` (this task's own arithmetic gives 59: 46 pre-existing + 5 `test_cache.py` + 1 `test_dataset.py` addition + 2 `test_features.py` additions + 5 `test_train.py` -- but two later task-review fix rounds each added one more test after this task, a cache-invalidation test in Task 1's fix round and a seed-reproducibility test in Task 4's fix round, bringing the actual total at this point to 61; the final whole-branch review's own fixes then add 2 more `test_features.py` boundary tests, bringing the true final total to 63 -- see the Definition of done)
 
 - [ ] **Step 6: Commit**
 
@@ -1341,6 +1341,6 @@ git commit -m "Add notebooks/07_cnn_rung3.ipynb (rung 3, RUN ME)"
 
 ## Definition of done
 
-- [ ] `"/c/Users/alher/anaconda3/envs/dat-parkinson/python.exe" -m pytest tests/ -q` passes with all tests: 46 pre-existing + 5 (`test_cache.py`) + 1 (`test_dataset.py` addition) + 2 (`test_features.py` addition) + 5 (`test_train.py`) = **59 tests**.
+- [ ] `"/c/Users/alher/anaconda3/envs/dat-parkinson/python.exe" -m pytest tests/ -q` passes with all tests: 46 pre-existing + 5 (`test_cache.py`) + 1 (`test_dataset.py` addition) + 2 (`test_features.py` addition) + 5 (`test_train.py`) = 59 by this task's own arithmetic, **but** two later task-review fix rounds each added one more test (a cache-invalidation test in Task 1's fix round, a seed-reproducibility test in Task 4's fix round) and the final whole-branch review added 2 more `test_features.py` boundary tests, so the actual final count is **63 tests**.
 - [ ] `notebooks/06_cnn_rung2.ipynb` and `notebooks/07_cnn_rung3.ipynb` exist, are `[RUN ME]`-marked, and were never executed by Claude (Tasks 5-6's Step 2 sanity checks substitute for execution).
 - [ ] `README.md` is **not** updated by this plan with any rung-2/3 result numbers — that happens after the user runs both notebooks and reports the numbers back (AI-assistant data rule + notebook-graduation rule).
