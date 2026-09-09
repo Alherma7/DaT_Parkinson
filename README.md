@@ -350,6 +350,17 @@ and `code-execution-submission.md` extensions).
     production model; `rung4_lrsched_*` checkpoints not used, but this
     is a candidate to revisit (e.g. combined with another experiment)
     if time allows after the remaining rung-4 experiments.
+  - **Experiment 3 (augmentation): GATE NOT PASSED — negative result,
+    same direction-but-not-significant pattern as experiment 2.**
+    `notebooks/11_cnn_augmentation.ipynb`: flip + ±10° rotation (A-P/S-I
+    plane only) + narrow brightness jitter (`src/augment.py`) gave
+    5-repeat mean 0.4431 (sd 0.0158) — *better* than the current CNN by
+    +0.0089, but sd rose to 0.0158 (vs. 0.0109 current), pushing the
+    noise threshold to 0.0316 — well above the improvement. Paired
+    bootstrap 95% CI [-0.0081, +0.0238] straddles zero. Third
+    experiment in a row with a directionally positive mean that doesn't
+    clear the noise bar; current rung-3 CNN stays the production model,
+    `rung4_augment_*` checkpoints not used.
 
 - [x] Run `notebooks/01_eda_volumes.ipynb` and record the answers to its
       questions here — see Progress above (2026-09-08).
