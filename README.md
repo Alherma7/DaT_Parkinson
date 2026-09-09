@@ -260,6 +260,37 @@ and `code-execution-submission.md` extensions).
     threshold (0.0218); paired bootstrap 95% CI on the blend-vs-CNN delta
     [-0.0354, -0.0106], fully negative. **`main.py` must run both
     models and blend their probabilities at w_cnn=0.70.**
+- 2026-09-09: **Submission packaging built and smoke-tested successfully.**
+  `src/config.py` (runtime-environment auto-detection),
+  `src/features.py::extract_baseline_features`,
+  `src/model.py::rung3_checkpoint_filenames`,
+  `src/submission.py::combine_predictions`,
+  `scripts/build_submission_assets.py`, and `submission_src/main.py`
+  written (TDD where applicable), reviewed via subagent-driven
+  development (one Critical fix before merge: missing/partial
+  checkpoints would have silently written a NaN-filled `submission.csv`
+  with no exception — now raises `FileNotFoundError`). Ran
+  `scripts/build_submission_assets.py`, packaged with the runtime
+  repo's (`drivendataorg/competition-sfmn-parkinsons-runtime`) `just
+  pack-submission`, and ran `just test-submission` against the 20-volume
+  smoke test set:
+  - **Exit code 0, ~64s total** (well under the 6-minute smoke-test
+    limit), GPU available inside the container (`device=cuda`).
+  - All 25 rung-3 checkpoints loaded via `torch.load` with no error,
+    despite the local/runtime torch version gap (2.14.0+cu126 vs.
+    2.12.1+cu129) flagged as a risk beforehand.
+  - Volume-caching worked as designed: checkpoint 1 took 34.1s (all 20
+    volumes' preprocessing), checkpoints 2-25 took 0.0-0.4s each (reused
+    the cache, not reprocessed).
+  - `sklearn.InconsistentVersionWarning` fired (pipeline pickled with
+    1.9.0, runtime has 1.8.0) — non-fatal, pipeline still ran correctly;
+    the version-gap risk flagged in the final review did materialize,
+    just didn't break anything this time.
+  - 20/20 volumes had a valid classical-feature mask (0 CNN-alone
+    fallback rows).
+  - `submission/submission.csv`: header `uid,is_pathologic` and 21 lines
+    (1 header + 20 rows), exactly matching `submission_format.csv`'s
+    shape.
 
 ## Next steps
 
@@ -418,6 +449,7 @@ and `code-execution-submission.md` extensions).
       blend at w_cnn=0.70**, not the CNN alone.
 - [ ] `RESOURCES.md`: log every technique and every external
       data/pretrained-model candidate as it's considered.
-- [ ] Submission packaging (`main.py`: CNN ensemble inference +
-      `build_combat_baseline()` refit on 100% of labeled training data +
-      blend at w_cnn=0.70) + local Docker rehearsal.
+- [x] Submission packaging + local Docker rehearsal — see Progress above
+      (2026-09-09). Smoke test passed (exit 0, ~64s, correct CSV shape).
+      Remaining: a full (non-smoke) local Docker run, then a real
+      platform smoke-test submission, before the first full submission.
