@@ -56,3 +56,25 @@ def test_dataset_uses_injected_load_fn_instead_of_data_load_volume(monkeypatch):
     assert isinstance(tensor, torch.Tensor)
     assert tensor.shape == (1, *config.TARGET_SHAPE)
     assert label == pytest.approx(0.0)
+
+
+def test_dataset_applies_transform_when_given():
+    def double(array):
+        return array * 2.0
+
+    ds = dataset.DatParkinsonDataset(uids=["a"], labels=[1], load_fn=_fake_load_volume, transform=double)
+    plain = dataset.DatParkinsonDataset(uids=["a"], labels=[1], load_fn=_fake_load_volume)
+
+    transformed_tensor, _ = ds[0]
+    plain_tensor, _ = plain[0]
+
+    torch.testing.assert_close(transformed_tensor, plain_tensor * 2.0)
+
+
+def test_dataset_without_transform_leaves_array_unchanged():
+    ds = dataset.DatParkinsonDataset(uids=["a"], load_fn=_fake_load_volume)
+
+    tensor, _ = ds[0]
+
+    expected = torch.from_numpy(_fake_load_volume("a"))
+    torch.testing.assert_close(tensor, expected)
