@@ -9,7 +9,6 @@ asserted without depending on real gradient-descent dynamics.
 
 from unittest import mock
 
-import pytest
 import torch
 
 import train
@@ -158,3 +157,29 @@ def test_scheduler_is_stepped_once_per_epoch():
     )
 
     assert scheduler.step.call_count == len(history["train_loss"])
+
+
+def test_seed_reseeds_an_explicit_loader_generator():
+    def run():
+        net = TinyNet()
+        gen = torch.Generator().manual_seed(0)
+        x = torch.randn(8, 4, generator=gen)
+        y = torch.randint(0, 2, (8,), generator=gen).float()
+        train_ds = torch.utils.data.TensorDataset(x, y)
+        val_ds = torch.utils.data.TensorDataset(x[:4], y[:4])
+        loader_gen = torch.Generator()  # NOT seeded here -- train_one_fold must seed it
+        train_loader = torch.utils.data.DataLoader(train_ds, batch_size=4, shuffle=True, generator=loader_gen)
+        val_loader = torch.utils.data.DataLoader(val_ds, batch_size=4)
+        optimizer = torch.optim.Adam(net.parameters(), lr=1e-2)
+        loss_fn = torch.nn.BCEWithLogitsLoss()
+        _, history = train.train_one_fold(
+            net, train_loader, val_loader, optimizer, loss_fn,
+            epochs=3, patience=10, device=torch.device("cpu"), use_amp=False, seed=42,
+        )
+        return history
+
+    torch.manual_seed(0)
+    history_a = run()
+    torch.manual_seed(0)
+    history_b = run()
+    assert history_a == history_b
