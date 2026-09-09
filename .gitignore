@@ -7,6 +7,17 @@ models/
 outputs/
 submission/
 
+# Generated submission assets (scripts/build_submission_assets.py output) --
+# submission_src/main.py is hand-written and stays tracked; everything
+# else here is a copy or a binary artifact, regenerated on demand.
+submission_src/model_assets/
+submission_src/config.py
+submission_src/data.py
+submission_src/model.py
+submission_src/features.py
+submission_src/dataset.py
+submission_src/submission.py
+
 # Python
 __pycache__/
 *.pyc
