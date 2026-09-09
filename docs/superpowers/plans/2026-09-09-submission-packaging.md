@@ -612,15 +612,46 @@ if __name__ == "__main__":
 Run: `python -m py_compile scripts/build_submission_assets.py`
 Expected: no output, exit code 0.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Update `.gitignore`**
+
+`.gitignore` already ignores `checkpoints/`, `models/`, `outputs/`,
+`submission/` (model artifacts) but not `submission_src/` — the
+directory this script populates with copied `.py` modules, 25 copied
+`.pt` checkpoints, and a pickled pipeline. Without this, running the
+script leaves all of that untracked and one `git add -A` away from
+committing large binaries. `submission_src/main.py` is the one file in
+that directory that IS meant to be tracked (it's hand-written source,
+not a generated copy), so ignore everything else in the directory
+individually rather than the whole directory.
+
+Add this block to `.gitignore`, after the existing `# Model artifacts`
+block:
+
+```
+# Generated submission assets (scripts/build_submission_assets.py output) --
+# submission_src/main.py is hand-written and stays tracked; everything
+# else here is a copy or a binary artifact, regenerated on demand.
+submission_src/model_assets/
+submission_src/config.py
+submission_src/data.py
+submission_src/model.py
+submission_src/features.py
+submission_src/dataset.py
+submission_src/submission.py
+```
+
+- [ ] **Step 4: Commit**
 
 ```bash
-git add scripts/build_submission_assets.py
+git add scripts/build_submission_assets.py .gitignore
 git commit -m "Add scripts/build_submission_assets.py to package submission_src/
 
 [RUN ME] -- fits the classical baseline on 100% of training data and
 copies checkpoints/modules into submission_src/. Not run by Claude
-(docs/superpowers/specs/2026-09-09-submission-packaging-design.md)."
+(docs/superpowers/specs/2026-09-09-submission-packaging-design.md).
+Also updates .gitignore -- submission_src/ held nothing before this
+task, so its generated contents (copied modules, checkpoints, the
+pickled pipeline) were not yet excluded."
 ```
 
 ---
