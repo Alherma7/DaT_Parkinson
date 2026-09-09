@@ -335,6 +335,21 @@ and `code-execution-submission.md` extensions).
     negative overall — oversampling one weak family can trade off
     against another. Current rung-3 CNN stays the production model;
     `rung4_familybias_*` checkpoints not used.
+  - **Experiment 2 (cosine LR schedule): GATE NOT PASSED — negative
+    result, but notable.** `notebooks/10_cnn_lr_schedule.ipynb`:
+    `CosineAnnealingWarmRestarts` (T_0=`config.EPOCHS`, `T_mult`=1,
+    `eta_min`=1e-6 — Chegodaev et al. 2026's literal values; no restart
+    ever fires in practice since early stopping means folds never reach
+    epoch 50, so this really tests smooth cosine decay, not restarts)
+    gave 5-repeat mean 0.4462 (sd 0.0063) — *better* than the current
+    CNN by +0.0058, but under the 0.0218 noise threshold; paired
+    bootstrap 95% CI [-0.0179, +0.0080] straddles zero. **Notable**: sd
+    dropped from 0.0109 (current CNN) to 0.0063 — the schedule may be
+    stabilizing training across seeds even without a mean-log-loss win
+    large enough to clear this gate. Current rung-3 CNN stays the
+    production model; `rung4_lrsched_*` checkpoints not used, but this
+    is a candidate to revisit (e.g. combined with another experiment)
+    if time allows after the remaining rung-4 experiments.
 
 - [x] Run `notebooks/01_eda_volumes.ipynb` and record the answers to its
       questions here — see Progress above (2026-09-08).
