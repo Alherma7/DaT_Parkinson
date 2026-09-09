@@ -14,6 +14,7 @@ SMOKE_TEST_NIFTI_DIR = SMOKE_TEST_DIR / "niftis"
 SMOKE_TEST_SUBMISSION_FORMAT_PATH = SMOKE_TEST_DIR / "submission_format.csv"
 
 CHECKPOINT_DIR = PROJECT_ROOT / "checkpoints"
+CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 MODELS_DIR = PROJECT_ROOT / "models"
 OUTPUTS_DIR = PROJECT_ROOT / "outputs"
 
