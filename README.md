@@ -361,6 +361,16 @@ and `code-execution-submission.md` extensions).
     experiment in a row with a directionally positive mean that doesn't
     clear the noise bar; current rung-3 CNN stays the production model,
     `rung4_augment_*` checkpoints not used.
+  - **Experiment 4 (`class_weight="balanced"`): GATE NOT PASSED —
+    negative result, as expected.** `notebooks/12_cnn_class_weight.ipynb`:
+    `BCEWithLogitsLoss(pos_weight=...)` (`evaluate.compute_pos_weight`,
+    per-fold) gave 5-repeat mean 0.4527 (sd 0.0129) — essentially flat,
+    *worse* than the current CNN by -0.0007, inside the 0.0258 noise
+    band. Paired bootstrap 95% CI [-0.0239, +0.0202] straddles zero.
+    Matches the prior expectation stated in the notebook's intro (mild
+    imbalance, and a specific argument against `pos_weight` distorting
+    log-loss calibration). Current rung-3 CNN stays the production
+    model; `rung4_classweight_*` checkpoints not used.
 
 - [x] Run `notebooks/01_eda_volumes.ipynb` and record the answers to its
       questions here — see Progress above (2026-09-08).
