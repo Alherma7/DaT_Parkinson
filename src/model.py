@@ -111,6 +111,16 @@ def build_model():
     return DatCNN()
 
 
+def rung3_checkpoint_filenames(seeds=range(config.SEED, config.SEED + 5), n_folds=config.N_FOLDS):
+    """Filenames of the rung-3 nested-CV checkpoints
+    (notebooks/07_cnn_rung3.ipynb), e.g. "rung3_seed42_fold0.pt" --
+    the naming convention that notebook's own torch.save calls already
+    use. Kept here so scripts/build_submission_assets.py names the files
+    it copies the same way instead of re-deriving the pattern.
+    """
+    return [f"rung3_seed{seed}_fold{fold}.pt" for seed in seeds for fold in range(n_folds)]
+
+
 def predict(model, x):
     """Forward pass -> sigmoid -> numpy probabilities -- the deep-learning
     analogue of `predict_proba` on the classical pipelines. Puts the model

@@ -162,3 +162,23 @@ def test_datcnn_can_overfit_a_tiny_batch():
         opt.step()
 
     assert loss.item() < 0.1
+
+
+# --- rung3_checkpoint_filenames ------------------------------------------
+
+def test_rung3_checkpoint_filenames_matches_the_25_files_on_disk():
+    names = model_module.rung3_checkpoint_filenames()
+
+    assert len(names) == 25
+    assert names[0] == "rung3_seed42_fold0.pt"
+    assert names[-1] == "rung3_seed46_fold4.pt"
+    assert "rung3_seed44_fold2.pt" in names
+
+
+def test_rung3_checkpoint_filenames_respects_custom_seeds_and_folds():
+    names = model_module.rung3_checkpoint_filenames(seeds=[1, 2], n_folds=3)
+
+    assert names == [
+        "rung3_seed1_fold0.pt", "rung3_seed1_fold1.pt", "rung3_seed1_fold2.pt",
+        "rung3_seed2_fold0.pt", "rung3_seed2_fold1.pt", "rung3_seed2_fold2.pt",
+    ]
