@@ -359,10 +359,14 @@ git commit -m "Add injectable load_fn to DatParkinsonDataset (TDD)"
 
 **Interfaces:**
 - Consumes: nothing new.
-- Produces: `features.inplane_family(spacing_x: float) -> str`. Consumed
-  by both notebooks (Tasks 5-6) for the LOFO family split and CV
-  stratification; `notebooks/03_baseline_classical.ipynb`'s own inline
-  copy is left untouched (its recorded results don't need re-running).
+- Produces: `features.inplane_family(spacing_x: float) -> str`. Not
+  directly called by Tasks 5-6 (their notebooks reuse the already-
+  materialized `inplane_family` column from `baseline_features.csv`
+  rather than recomputing it — see Tasks 5-6's own Interfaces sections);
+  this is the single tested source of truth for any future code that
+  needs to bucket a raw spacing value instead of reading the column.
+  `notebooks/03_baseline_classical.ipynb`'s own inline copy is left
+  untouched (its recorded results don't need re-running).
 
 - [ ] **Step 1: Write the failing tests**
 
