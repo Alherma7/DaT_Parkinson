@@ -6,17 +6,42 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 DATA_RAW = PROJECT_ROOT / "data" / "raw"
 DATA_PROCESSED = PROJECT_ROOT / "data" / "processed"
-NIFTI_DIR = DATA_RAW / "niftis"
 TRAIN_LABELS_PATH = DATA_RAW / "train_labels.csv"
 
 SMOKE_TEST_DIR = DATA_RAW / "smoke_test"
 SMOKE_TEST_NIFTI_DIR = SMOKE_TEST_DIR / "niftis"
 SMOKE_TEST_SUBMISSION_FORMAT_PATH = SMOKE_TEST_DIR / "submission_format.csv"
 
+
+def _resolve_runtime_paths(code_execution_root):
+    """(running_in_code_execution, nifti_dir, submission_format_path).
+
+    If `code_execution_root` exists, this process is running inside the
+    DrivenData competition container (docs/superpowers/specs/
+    2026-09-09-submission-packaging-design.md) -- test volumes and the
+    submission format live under it, not under this repo's data/raw/.
+    Otherwise, fall back to the local training layout (submission_format_path
+    is None locally; nothing needs it outside the container).
+    """
+    if code_execution_root.exists():
+        return (True, code_execution_root / "data" / "niftis",
+                code_execution_root / "data" / "submission_format.csv")
+    return False, DATA_RAW / "niftis", None
+
+
+RUNNING_IN_CODE_EXECUTION, NIFTI_DIR, SUBMISSION_FORMAT_PATH = (
+    _resolve_runtime_paths(Path("/code_execution"))
+)
+
 CHECKPOINT_DIR = PROJECT_ROOT / "checkpoints"
-CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 MODELS_DIR = PROJECT_ROOT / "models"
 OUTPUTS_DIR = PROJECT_ROOT / "outputs"
+if not RUNNING_IN_CODE_EXECUTION:
+    # In the competition container this directory is unused (checkpoints
+    # ship pre-copied into submission_src/model_assets/) and the
+    # filesystem outside /code_execution may not be writable -- skip the
+    # mkdir there rather than risk a crash at import time.
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
 RANDOM_STATE = 42
 N_FOLDS = 5
