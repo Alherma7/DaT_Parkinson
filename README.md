@@ -291,6 +291,14 @@ and `code-execution-submission.md` extensions).
   - `submission/submission.csv`: header `uid,is_pathologic` and 21 lines
     (1 header + 20 rows), exactly matching `submission_format.csv`'s
     shape.
+  - **Confirmed on DrivenData's own platform too**: submitted the same
+    `submission.zip` as a platform smoke test (separate from the
+    3-per-week regular submission limit — 3 smoke tests/day, no cost to
+    the weekly quota). Exit 0, ~35s. Scored (smoke tests get scored for
+    debugging even though excluded from the leaderboard): **log loss
+    0.3051** — well below the classical baseline (0.5290) and the CNN's
+    CV mean (0.4520), though n=20 is small/high-variance so this single
+    number isn't the expected real-test-set score, just a strong signal.
 
 ## Next steps
 
