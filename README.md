@@ -315,8 +315,26 @@ and `code-execution-submission.md` extensions).
   above) but succeeded anyway since DrivenData's filtering caught it;
   the rebuilt zip should be used for any further submissions.
   Public leaderboard: **rank #254**, log loss 0.4648, AUROC 0.8796.
-
-## Next steps
+- 2026-09-09: **Rung 4 started** — revisiting the prior-art techniques
+  logged in `RESOURCES.md`'s initial scan but never tried (augmentation,
+  LR schedule, family-oversampling, `class_weight`, denoising), each
+  gated against the current CNN (0.4520) rather than the classical
+  baseline. `notebooks/08_training_throughput_check.ipynb` confirmed
+  training is GPU-bound (70% of synthetic-only throughput) and a full
+  rung-3-scale run (25 fold-trainings) costs ~7-18 minutes, not hours —
+  all 5 experiments comfortably fit before 2026-09-16.
+  - **Experiment 1 (family-oversampling): GATE NOT PASSED — negative
+    result.** `notebooks/09_cnn_family_oversampling.ipynb`: boosting the
+    2.46mm/3.895mm families (rung 3's two worst performers) via
+    `WeightedRandomSampler` (`evaluate.family_oversample_weights`,
+    boost_factor=2.0 won the 3-candidate mini-check) gave 5-repeat mean
+    0.4555 (sd 0.0114) — *worse* than the current CNN by -0.0035, inside
+    the 0.0228 noise band. Paired bootstrap 95% CI [-0.0288, +0.0166]
+    straddles zero. **Per-family detail**: 3.895mm actually improved
+    (0.5035→0.4823) but 2.46mm got worse (0.5191→0.5330), netting out
+    negative overall — oversampling one weak family can trade off
+    against another. Current rung-3 CNN stays the production model;
+    `rung4_familybias_*` checkpoints not used.
 
 - [x] Run `notebooks/01_eda_volumes.ipynb` and record the answers to its
       questions here — see Progress above (2026-09-08).
