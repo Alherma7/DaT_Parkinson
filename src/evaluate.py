@@ -93,6 +93,18 @@ def paired_bootstrap_ci(y_true, probs_a, probs_b, seed, n_bootstrap=1000):
     return float(ci_low), float(ci_high)
 
 
+def compute_pos_weight(labels):
+    """`torch.nn.BCEWithLogitsLoss`'s `pos_weight` for `class_weight=
+    "balanced"`: n_negative / n_positive, computed from the actual
+    labels passed in (a fold's inner-train split, not a fixed global
+    constant -- class balance can vary slightly per fold).
+    """
+    labels = np.asarray(labels)
+    n_pos = labels.sum()
+    n_neg = len(labels) - n_pos
+    return float(n_neg / n_pos)
+
+
 def family_oversample_weights(family, boosted_families, boost_factor):
     """Per-sample weight for `torch.utils.data.WeightedRandomSampler`:
     `boost_factor` for rows whose `inplane_family` is in

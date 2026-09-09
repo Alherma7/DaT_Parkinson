@@ -108,6 +108,32 @@ def test_make_folds_handles_singleton_rare_families_without_crashing():
     assert len(folds) == 5
 
 
+# --- compute_pos_weight ---------------------------------------------------
+
+def test_compute_pos_weight_matches_hand_computed_ratio():
+    labels = [1, 1, 1, 0]  # 3 positive, 1 negative
+
+    pos_weight = evaluate.compute_pos_weight(labels)
+
+    assert pos_weight == pytest.approx(1 / 3)  # n_negative / n_positive
+
+
+def test_compute_pos_weight_is_one_when_classes_are_balanced():
+    labels = [0, 0, 1, 1]
+
+    pos_weight = evaluate.compute_pos_weight(labels)
+
+    assert pos_weight == pytest.approx(1.0)
+
+
+def test_compute_pos_weight_greater_than_one_when_positives_are_the_minority():
+    labels = [0, 0, 0, 1]  # 1 positive, 3 negative
+
+    pos_weight = evaluate.compute_pos_weight(labels)
+
+    assert pos_weight == pytest.approx(3.0)
+
+
 # --- family_oversample_weights ------------------------------------------
 
 def test_family_oversample_weights_boosts_only_named_families():
