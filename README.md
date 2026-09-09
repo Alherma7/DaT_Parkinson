@@ -299,6 +299,22 @@ and `code-execution-submission.md` extensions).
     0.3051** — well below the classical baseline (0.5290) and the CNN's
     CV mean (0.4520), though n=20 is small/high-variance so this single
     number isn't the expected real-test-set score, just a strong signal.
+  - **Bug caught mid-flight**: `data.load_volume`'s degenerate-volume
+    warning embedded the real test uid, and DrivenData's log scanner
+    auto-filtered two lines from a full-submission run with an explicit
+    disqualification warning. Fixed in `src/data.py` (commit 069bb28,
+    TDD) — the message never includes uid, in any context. Rebuilt
+    `submission.zip` immediately after.
+- 2026-09-09: **First full/regular submission: log loss 0.4648** on the
+  real (undisclosed size, ~600 volumes estimated from timing) held-out
+  test set. Exit 0, ~15m20s (well under the 3h limit). Beats the
+  classical baseline by -0.064; ~1.3 sd from the CNN's own 5×5 CV mean
+  (0.4520, sd 0.0109) — normal CV-vs-holdout variance. Used 1 of the
+  3-per-week regular submissions (2 remain before the 2026-09-16
+  deadline). This run used the pre-fix zip (see the uid-leak bug just
+  above) but succeeded anyway since DrivenData's filtering caught it;
+  the rebuilt zip should be used for any further submissions.
+  Public leaderboard: **rank #254**, log loss 0.4648, AUROC 0.8796.
 
 ## Next steps
 
@@ -457,7 +473,10 @@ and `code-execution-submission.md` extensions).
       blend at w_cnn=0.70**, not the CNN alone.
 - [ ] `RESOURCES.md`: log every technique and every external
       data/pretrained-model candidate as it's considered.
-- [x] Submission packaging + local Docker rehearsal — see Progress above
-      (2026-09-09). Smoke test passed (exit 0, ~64s, correct CSV shape).
-      Remaining: a full (non-smoke) local Docker run, then a real
-      platform smoke-test submission, before the first full submission.
+- [x] Submission packaging + local Docker rehearsal + first full
+      submission — see Progress above (2026-09-09). Local smoke test,
+      platform smoke test (0.3051), and first full submission
+      (**0.4648, rank #254**) all passed/scored. A real
+      disqualification-risk bug (test uid leaked into a log warning) was
+      caught and fixed (commit 069bb28) before further submissions.
+      2 of 3 weekly regular submissions remain before 2026-09-16.
