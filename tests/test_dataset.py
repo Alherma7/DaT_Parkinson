@@ -43,3 +43,16 @@ def test_dataset_length_matches_uids():
     ds = dataset.DatParkinsonDataset(uids=["a", "b", "c", "d"])
 
     assert len(ds) == 4
+
+
+def test_dataset_uses_injected_load_fn_instead_of_data_load_volume(monkeypatch):
+    def raising_load_volume(uid):
+        raise AssertionError("data.load_volume should not be called when load_fn is injected")
+    monkeypatch.setattr(data, "load_volume", raising_load_volume)
+
+    ds = dataset.DatParkinsonDataset(uids=["a", "b"], labels=[0, 1], load_fn=_fake_load_volume)
+    tensor, label = ds[0]
+
+    assert isinstance(tensor, torch.Tensor)
+    assert tensor.shape == (1, *config.TARGET_SHAPE)
+    assert label == pytest.approx(0.0)
