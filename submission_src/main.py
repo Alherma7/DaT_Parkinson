@@ -1,7 +1,10 @@
 """Submission entrypoint (docs/superpowers/specs/2026-09-09-submission-packaging-design.md).
 
-Runs the rung-3 CNN ensemble (25 checkpoints) and the pre-fit ComBat
-classical baseline, blends them at CNN_WEIGHT, and writes submission.csv.
+Runs the 150-checkpoint CNN ensemble (6 production variants x 5 seeds x
+5 folds, pooled in logit space) and the pre-fit ComBat classical
+baseline, blends them via a fitted logistic-regression calibration
+(BLEND_A/B/C, with a CNN-only FALLBACK_A1/C1 for degenerate-mask rows),
+and writes submission.csv.
 
 Never logs per-row information (uid next to a prediction, per-row
 feature values) -- only aggregate counts and phase timings, per this
