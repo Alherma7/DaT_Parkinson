@@ -31,27 +31,45 @@ NIFTI_DIR = DATA_DIR / "niftis"
 SUBMISSION_FORMAT_PATH = DATA_DIR / "submission_format.csv"
 WRITE_SUBMISSION_PATH = Path("submission.csv")
 MODEL_ASSETS = Path(__file__).parent / "model_assets"
-CNN_WEIGHT = 0.70  # README.md, 2026-09-09 leave-one-repeat-out result
+# notebooks/22_calibration_refit_rowwise_cv.ipynb (2026-09-10), 6-variant
+# composition, logit-space pooling + LogisticRegression(fit_intercept=True)
+# blend -- docs/superpowers/specs/2026-09-10-calibrated-ensemble-blend-design.md
+BLEND_A = 0.8558      # CNN logit coefficient
+BLEND_B = 0.5296      # baseline logit coefficient
+BLEND_C = -0.0905     # intercept
+FALLBACK_A1 = 0.9784  # CNN-only fallback (degenerate baseline mask)
+FALLBACK_C1 = 0.0508  # CNN-only fallback intercept
+PROB_CLIP = (0.005, 0.995)  # widened from (1e-6, 1-1e-6) -- tail-risk hedge,
+                             # second Opus review finding 7g: one confidently-
+                             # wrong row at 1e-6 costs ~0.023 log loss
+INFERENCE_BATCH_SIZE = 32   # bumped from config.BATCH_SIZE=8 (a training
+                             # default) -- inference-only, model.predict()
+                             # already runs in eval mode (deterministic
+                             # BatchNorm), pure speed win, finding 7a
 DEVICE = config.DEVICE if torch.cuda.is_available() else "cpu"
 
 
 def run_cnn_ensemble(uids):
-    """Average sigmoid probability across all 25 rung-3 checkpoints.
+    """Average sigmoid probability across all 150 production checkpoints
+    (6 variants x 5 seeds x 5 folds -- notebooks 16/18/22's adopted
+    composition), pooled in LOGIT space (submission.pool_logit_mean),
+    not probability space -- notebooks/22_calibration_refit_rowwise_cv.ipynb's
+    winning pre-registered comparison.
 
     Each test volume's preprocessing (resample/crop/normalize --
     data.load_volume, the expensive part) runs at most ONCE per uid and
     is cached in memory (a plain dict, not the disk-backed
     cache.CachedVolumeStore -- inference is a single session, nothing to
-    persist across runs) so all 25 checkpoints' passes reuse it instead
-    of repeating it 25x per volume. Returns {uid: probability}.
+    persist across runs) so all 150 checkpoints' passes reuse it instead
+    of repeating it 150x per volume. Returns {uid: probability}.
     """
     checkpoint_dir = MODEL_ASSETS / "checkpoints"
-    expected = model.rung3_checkpoint_filenames()
+    expected = model.production_checkpoint_filenames()
     checkpoint_paths = [checkpoint_dir / name for name in expected]
     missing = [p.name for p in checkpoint_paths if not p.exists()]
     if missing:
         raise FileNotFoundError(
-            f"{len(missing)}/{len(expected)} rung-3 checkpoints missing from {checkpoint_dir} "
+            f"{len(missing)}/{len(expected)} production checkpoints missing from {checkpoint_dir} "
             "-- did scripts/build_submission_assets.py run, and did model_assets/ get zipped?"
         )
     print(f"CNN ensemble: {len(checkpoint_paths)} checkpoints, {len(uids)} test volumes, device={DEVICE}")
@@ -64,20 +82,21 @@ def run_cnn_ensemble(uids):
         return volume_cache[uid]
 
     ds = dataset.DatParkinsonDataset(uids, load_fn=cached_load_volume)
-    summed = np.zeros(len(uids))
+    all_probs = []
     for i, checkpoint_path in enumerate(checkpoint_paths):
         start = time.time()
         net = model.build_model().to(DEVICE)
         net.load_state_dict(torch.load(checkpoint_path, map_location=DEVICE))
-        loader = torch.utils.data.DataLoader(ds, batch_size=config.BATCH_SIZE, num_workers=0)
+        loader = torch.utils.data.DataLoader(ds, batch_size=INFERENCE_BATCH_SIZE, num_workers=0)
         probs = []
         for x, _ in loader:
             probs.append(model.predict(net, x))
-        summed += np.concatenate(probs)
-        print(f"  checkpoint {i + 1}/{len(checkpoint_paths)} done in {time.time() - start:.1f}s")
+        all_probs.append(np.concatenate(probs))
+        if (i + 1) % 10 == 0 or i + 1 == len(checkpoint_paths):
+            print(f"  checkpoint {i + 1}/{len(checkpoint_paths)} done in {time.time() - start:.1f}s")
 
-    averaged = summed / len(checkpoint_paths)
-    return dict(zip(uids, averaged.tolist()))
+    pooled = submission.pool_logit_mean(all_probs)
+    return dict(zip(uids, pooled.tolist()))
 
 
 def run_classical_baseline(uids):
@@ -128,8 +147,11 @@ def main():
 
     cnn_probs = run_cnn_ensemble(uids)
     baseline_probs = run_classical_baseline(uids)
-    predictions = submission.combine_predictions(uids, cnn_probs, baseline_probs, CNN_WEIGHT)
-    predictions = np.clip(predictions, 1e-6, 1 - 1e-6)
+    predictions = submission.combine_predictions(
+        uids, cnn_probs, baseline_probs,
+        BLEND_A, BLEND_B, BLEND_C, FALLBACK_A1, FALLBACK_C1,
+    )
+    predictions = np.clip(predictions, *PROB_CLIP)
 
     out = submission_format.copy()
     out[config.TARGET_COLUMN] = predictions
