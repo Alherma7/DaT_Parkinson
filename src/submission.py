@@ -35,24 +35,33 @@ def pool_logit_mean(prob_arrays):
     return from_logit(np.mean([to_logit(p) for p in prob_arrays], axis=0))
 
 
-def combine_predictions(uids, cnn_probs, baseline_probs, cnn_weight):
+def combine_predictions(uids, cnn_probs, baseline_probs, a, b, c, a1, c1):
     """Blend per-uid CNN and classical-baseline probabilities into the
     submission's final prediction, in `uids`' exact order.
 
-    `cnn_probs` and `baseline_probs` are dicts keyed by uid. Every uid in
-    `uids` must have a CNN prediction (raises KeyError otherwise -- the
-    CNN ensemble runs on every test volume unconditionally). A uid
-    missing from `baseline_probs` (features.extract_baseline_features
-    returned None for it -- a degenerate striatum mask) falls back to
-    the CNN probability alone rather than crashing or dropping the row.
+    `cnn_probs` is the CNN ensemble's already-pooled (see
+    `pool_logit_mean`) per-uid probability. `cnn_probs` and
+    `baseline_probs` are dicts keyed by uid. Every uid in `uids` must
+    have a CNN prediction (raises KeyError otherwise -- the CNN ensemble
+    runs on every test volume unconditionally). A uid missing from
+    `baseline_probs` (features.extract_baseline_features returned None
+    for it -- a degenerate striatum mask) uses the CNN-only fallback
+    calibration (a1, c1) instead of the main blend, rather than falling
+    back to the raw uncalibrated CNN probability.
+
+    Both paths are a logistic-regression blend in logit space, fit in
+    notebooks/22_calibration_refit_rowwise_cv.ipynb (2026-09-10):
+        main:     p = sigmoid(a * logit(cnn_p) + b * logit(baseline_p) + c)
+        fallback: p = sigmoid(a1 * logit(cnn_p) + c1)
 
     Returns a list of floats, same length and order as `uids`.
     """
     predictions = []
     for uid in uids:
-        cnn_p = cnn_probs[uid]
+        cnn_logit = to_logit(cnn_probs[uid])
         if uid in baseline_probs:
-            predictions.append(cnn_weight * cnn_p + (1 - cnn_weight) * baseline_probs[uid])
+            z = a * cnn_logit + b * to_logit(baseline_probs[uid]) + c
         else:
-            predictions.append(cnn_p)
+            z = a1 * cnn_logit + c1
+        predictions.append(float(from_logit(z)))
     return predictions

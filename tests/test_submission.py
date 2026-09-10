@@ -3,6 +3,7 @@ entrypoint's testable logic. No real data; uids here are arbitrary
 strings, not real patient identifiers.
 """
 
+import math
 import pytest
 import numpy as np
 
@@ -45,41 +46,67 @@ def test_pool_logit_mean_differs_from_probability_space_mean():
     assert not np.allclose(pooled, prob_space_mean)
 
 
+# --- combine_predictions -------------------------------------------------------
+
+def _expected_main_blend(cnn_p, baseline_p, a, b, c):
+    """Independent (non-to_logit/from_logit) reference computation, so
+    the test doesn't just re-assert the implementation against itself."""
+    cnn_logit = math.log(cnn_p / (1 - cnn_p))
+    baseline_logit = math.log(baseline_p / (1 - baseline_p))
+    z = a * cnn_logit + b * baseline_logit + c
+    return 1.0 / (1.0 + math.exp(-z))
+
+
+def _expected_fallback(cnn_p, a1, c1):
+    cnn_logit = math.log(cnn_p / (1 - cnn_p))
+    z = a1 * cnn_logit + c1
+    return 1.0 / (1.0 + math.exp(-z))
+
+
 def test_combine_predictions_blends_when_both_probabilities_present():
     uids = ["a", "b"]
     cnn_probs = {"a": 0.8, "b": 0.2}
     baseline_probs = {"a": 0.6, "b": 0.4}
+    a, b, c, a1, c1 = 0.8558, 0.5296, -0.0905, 0.9784, 0.0508
 
-    result = submission.combine_predictions(uids, cnn_probs, baseline_probs, cnn_weight=0.70)
+    result = submission.combine_predictions(uids, cnn_probs, baseline_probs, a, b, c, a1, c1)
 
-    assert result[0] == pytest.approx(0.70 * 0.8 + 0.30 * 0.6)
-    assert result[1] == pytest.approx(0.70 * 0.2 + 0.30 * 0.4)
+    assert result[0] == pytest.approx(_expected_main_blend(0.8, 0.6, a, b, c), abs=1e-9)
+    assert result[1] == pytest.approx(_expected_main_blend(0.2, 0.4, a, b, c), abs=1e-9)
 
 
-def test_combine_predictions_falls_back_to_cnn_alone_when_baseline_missing():
+def test_combine_predictions_falls_back_to_cnn_only_calibration_when_baseline_missing():
     uids = ["a", "b"]
     cnn_probs = {"a": 0.8, "b": 0.2}
     baseline_probs = {"a": 0.6}  # "b" has no classical features (degenerate mask)
+    a, b, c, a1, c1 = 0.8558, 0.5296, -0.0905, 0.9784, 0.0508
 
-    result = submission.combine_predictions(uids, cnn_probs, baseline_probs, cnn_weight=0.70)
+    result = submission.combine_predictions(uids, cnn_probs, baseline_probs, a, b, c, a1, c1)
 
-    assert result[1] == pytest.approx(0.2)  # CNN alone, not blended with anything
+    assert result[1] == pytest.approx(_expected_fallback(0.2, a1, c1), abs=1e-9)
+    # fallback path must NOT equal the raw uncalibrated CNN probability
+    assert result[1] != pytest.approx(0.2)
 
 
 def test_combine_predictions_preserves_uids_order_regardless_of_dict_order():
     uids = ["z", "a", "m"]
     cnn_probs = {"a": 0.1, "m": 0.5, "z": 0.9}  # inserted in a different order than uids
     baseline_probs = {"a": 0.1, "m": 0.5, "z": 0.9}
+    a, b, c, a1, c1 = 0.8558, 0.5296, -0.0905, 0.9784, 0.0508
 
-    result = submission.combine_predictions(uids, cnn_probs, baseline_probs, cnn_weight=1.0)
+    result = submission.combine_predictions(uids, cnn_probs, baseline_probs, a, b, c, a1, c1)
 
-    assert result == [0.9, 0.1, 0.5]
+    expected = [_expected_main_blend(0.9, 0.9, a, b, c),
+                _expected_main_blend(0.1, 0.1, a, b, c),
+                _expected_main_blend(0.5, 0.5, a, b, c)]
+    assert result == pytest.approx(expected, abs=1e-9)
 
 
 def test_combine_predictions_raises_if_a_uid_is_missing_from_cnn_probs():
     uids = ["a", "b"]
     cnn_probs = {"a": 0.8}  # "b" missing -- every test uid must have a CNN prediction
     baseline_probs = {}
+    a, b, c, a1, c1 = 0.8558, 0.5296, -0.0905, 0.9784, 0.0508
 
     with pytest.raises(KeyError):
-        submission.combine_predictions(uids, cnn_probs, baseline_probs, cnn_weight=0.70)
+        submission.combine_predictions(uids, cnn_probs, baseline_probs, a, b, c, a1, c1)
