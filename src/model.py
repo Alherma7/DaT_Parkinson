@@ -111,14 +111,40 @@ def build_model():
     return DatCNN()
 
 
-def rung3_checkpoint_filenames(seeds=range(config.SEED, config.SEED + 5), n_folds=config.N_FOLDS):
-    """Filenames of the rung-3 nested-CV checkpoints
-    (notebooks/07_cnn_rung3.ipynb), e.g. "rung3_seed42_fold0.pt" --
-    the naming convention that notebook's own torch.save calls already
-    use. Kept here so scripts/build_submission_assets.py names the files
-    it copies the same way instead of re-deriving the pattern.
+PRODUCTION_VARIANT_PREFIXES = [
+    "rung3", "rung4_familybias", "rung4_lrsched", "rung4_augment",
+    "rung4_classweight", "rung4_fixedepoch",
+]  # notebooks/16_multivariant_ensemble.ipynb + 18_fixed_epoch_full_data.ipynb
+   # composition, confirmed (denoise excluded) in
+   # notebooks/22_calibration_refit_rowwise_cv.ipynb (2026-09-10) --
+   # see docs/superpowers/specs/2026-09-10-calibrated-ensemble-blend-design.md
+
+
+def variant_checkpoint_filenames(prefix, seeds=range(config.SEED, config.SEED + 5),
+                                  n_folds=config.N_FOLDS):
+    """Filenames of one variant's nested-CV checkpoints, e.g.
+    "rung4_augment_seed42_fold0.pt" -- the naming convention every
+    training notebook's own torch.save calls already use.
     """
-    return [f"rung3_seed{seed}_fold{fold}.pt" for seed in seeds for fold in range(n_folds)]
+    return [f"{prefix}_seed{seed}_fold{fold}.pt" for seed in seeds for fold in range(n_folds)]
+
+
+def rung3_checkpoint_filenames(seeds=range(config.SEED, config.SEED + 5), n_folds=config.N_FOLDS):
+    """Filenames of the rung-3 nested-CV checkpoints (notebooks/07_cnn_rung3.ipynb).
+    Thin wrapper around variant_checkpoint_filenames -- kept for the
+    existing callers/tests that name it directly.
+    """
+    return variant_checkpoint_filenames("rung3", seeds, n_folds)
+
+
+def production_checkpoint_filenames():
+    """All 150 checkpoints (6 variants x 5 seeds x 5 folds) the shipped
+    ensemble averages -- the composition notebooks 16/18/22 adopted.
+    scripts/build_submission_assets.py and submission_src/main.py both
+    use this instead of re-deriving the variant list.
+    """
+    return [name for prefix in PRODUCTION_VARIANT_PREFIXES
+            for name in variant_checkpoint_filenames(prefix)]
 
 
 def predict(model, x):

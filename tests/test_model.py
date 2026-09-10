@@ -182,3 +182,23 @@ def test_rung3_checkpoint_filenames_respects_custom_seeds_and_folds():
         "rung3_seed1_fold0.pt", "rung3_seed1_fold1.pt", "rung3_seed1_fold2.pt",
         "rung3_seed2_fold0.pt", "rung3_seed2_fold1.pt", "rung3_seed2_fold2.pt",
     ]
+
+
+# --- variant_checkpoint_filenames / production_checkpoint_filenames --------
+
+def test_variant_checkpoint_filenames_matches_pattern_for_a_non_rung3_prefix():
+    names = model_module.variant_checkpoint_filenames("rung4_augment")
+
+    assert len(names) == 25
+    assert names[0] == "rung4_augment_seed42_fold0.pt"
+    assert names[-1] == "rung4_augment_seed46_fold4.pt"
+
+
+def test_production_checkpoint_filenames_returns_150_names_across_6_variants():
+    names = model_module.production_checkpoint_filenames()
+
+    assert len(names) == 150
+    assert len(set(names)) == 150  # no duplicates
+    assert len(model_module.PRODUCTION_VARIANT_PREFIXES) == 6
+    for name in names:
+        assert any(name.startswith(prefix + "_seed") for prefix in model_module.PRODUCTION_VARIANT_PREFIXES)
