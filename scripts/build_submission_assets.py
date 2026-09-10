@@ -49,18 +49,18 @@ def fit_and_pickle_baseline():
 def copy_checkpoints():
     dest = MODEL_ASSETS / "checkpoints"
     dest.mkdir(parents=True, exist_ok=True)
-    names = model.rung3_checkpoint_filenames()
+    names = model.production_checkpoint_filenames()
     copied = 0
     for name in names:
         src_path = config.CHECKPOINT_DIR / name
         if not src_path.exists():
             raise FileNotFoundError(
-                f"expected checkpoint not found: {src_path} -- "
-                "did notebooks/07_cnn_rung3.ipynb finish its full 5x5 run?"
+                f"expected checkpoint not found: {src_path} -- did every training "
+                "notebook (07/09/10/11/12/18) finish its full 5x5 run for its variant?"
             )
         shutil.copy2(src_path, dest / name)
         copied += 1
-    print(f"copied {copied}/{len(names)} rung-3 checkpoints -> {dest}")
+    print(f"copied {copied}/{len(names)} production checkpoints (6 variants) -> {dest}")
 
 
 def copy_modules():
