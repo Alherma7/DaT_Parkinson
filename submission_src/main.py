@@ -99,6 +99,7 @@ def run_cnn_ensemble(uids):
             print(f"  checkpoint {i + 1}/{len(checkpoint_paths)} done in {time.time() - start:.1f}s")
 
     pooled = submission.pool_logit_mean(all_probs)
+    assert pooled.shape == (len(uids),), f"pooled {pooled.shape} != {len(uids)} uids"
     return dict(zip(uids, pooled.tolist()))
 
 
@@ -107,7 +108,7 @@ def run_classical_baseline(uids):
     features.extract_baseline_features, then the pre-fit pipeline's
     predict_proba. A uid with a degenerate mask (None) is simply absent
     from the returned dict -- submission.combine_predictions() falls
-    back to the CNN alone for it.
+    back to a CNN-only calibrated fallback for it.
     """
     import pickle
     with open(MODEL_ASSETS / "combat_baseline.pkl", "rb") as f:
@@ -126,7 +127,7 @@ def run_classical_baseline(uids):
         rows.append(feat)
         valid_uids.append(uid)
     print(f"classical baseline: {len(valid_uids)}/{len(uids)} volumes had a valid mask "
-          f"({n_degenerate} degenerate -> CNN-alone fallback)")
+          f"({n_degenerate} degenerate -> CNN-only calibrated fallback)")
 
     if not rows:
         return {}
@@ -142,6 +143,10 @@ def main():
         f"main.py's own NIFTI_DIR ({NIFTI_DIR}) disagrees with config.NIFTI_DIR "
         f"({config.NIFTI_DIR}) -- config.py's runtime-environment detection "
         "did not fire as expected."
+    )
+    assert not config.USE_NLM_DENOISING, (
+        "config.USE_NLM_DENOISING is True, but the 150 production checkpoints "
+        "were trained on non-denoised volumes -- rung4_denoise is excluded."
     )
 
     submission_format = pd.read_csv(SUBMISSION_FORMAT_PATH)

@@ -1,8 +1,9 @@
 """[RUN ME] -- not run by Claude. Reads real per-row training data
 (data/processed/baseline_features.csv's labels) to fit the classical
 baseline on 100% of the training set, then assembles submission_src/:
-the fitted pipeline, the 25 rung-3 CNN checkpoints, and the src/ modules
-main.py needs. Run this once before packaging submission.zip (see
+the fitted pipeline, the 150 production CNN checkpoints (6 variants x 5
+seeds x 5 folds), and the src/ modules main.py needs. Run this once
+before packaging submission.zip (see
 docs/superpowers/specs/2026-09-09-submission-packaging-design.md), and
 again any time config.py/data.py/model.py/features.py/dataset.py/
 submission.py change.

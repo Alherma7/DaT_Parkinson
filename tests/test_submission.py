@@ -4,8 +4,9 @@ strings, not real patient identifiers.
 """
 
 import math
-import pytest
+
 import numpy as np
+import pytest
 
 import submission
 
