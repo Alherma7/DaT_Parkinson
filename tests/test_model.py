@@ -164,6 +164,57 @@ def test_datcnn_can_overfit_a_tiny_batch():
     assert loss.item() < 0.1
 
 
+# --- DatSlab2DCNN / build_slab_model (roadmap item 6) -----------------------
+
+def test_build_slab_model_forward_pass_shape_and_finiteness():
+    net = model_module.build_slab_model()
+    x = torch.randn(4, 1, *config.SLAB_TARGET_SHAPE[:2])
+
+    out = net(x)
+
+    assert out.shape == (4,)
+    assert torch.isfinite(out).all()
+
+
+def test_build_slab_model_returns_a_new_instance_each_call():
+    first = model_module.build_slab_model()
+    second = model_module.build_slab_model()
+
+    assert first is not second
+
+
+def test_datslab2dcnn_can_overfit_a_tiny_batch():
+    """Rung-0-style sanity check, same as test_datcnn_can_overfit_a_tiny_batch."""
+    torch.manual_seed(0)
+    net = model_module.build_slab_model()
+    x = torch.randn(4, 1, *config.SLAB_TARGET_SHAPE[:2])
+    y = torch.tensor([0.0, 1.0, 0.0, 1.0])
+    opt = torch.optim.Adam(net.parameters(), lr=1e-3)
+    loss_fn = torch.nn.BCEWithLogitsLoss()
+
+    for _ in range(40):
+        opt.zero_grad()
+        loss = loss_fn(net(x), y)
+        loss.backward()
+        opt.step()
+
+    assert loss.item() < 0.1
+
+
+def test_production_variant_build_fns_covers_every_current_prefix_plus_slab2d():
+    for prefix in model_module.PRODUCTION_VARIANT_PREFIXES:
+        assert model_module.PRODUCTION_VARIANT_BUILD_FNS[prefix] is model_module.build_model
+    assert model_module.PRODUCTION_VARIANT_BUILD_FNS["slab2d"] is model_module.build_slab_model
+
+
+def test_slab2d_not_yet_in_production_variant_prefixes():
+    """Regression guard: adding PRODUCTION_VARIANT_BUILD_FNS must not
+    silently add "slab2d" to the shipped composition -- that only happens
+    once notebooks/24_slab2d_architecture_diversity.ipynb's gate clears.
+    """
+    assert "slab2d" not in model_module.PRODUCTION_VARIANT_PREFIXES
+
+
 # --- rung3_checkpoint_filenames ------------------------------------------
 
 def test_rung3_checkpoint_filenames_matches_the_25_files_on_disk():

@@ -123,6 +123,20 @@ def denoise_volume(volume, patch_size=3, patch_distance=5):
                              fast_mode=True)
 
 
+def _warn_if_degenerate(normalized):
+    """Shared by `load_volume` and `load_slab`. Never include a uid in
+    this message: both functions run inside `submission_src/main.py`
+    against real competition test volumes, and the platform scans
+    submission logs for per-sample test-set information and disqualifies
+    on it -- a caller that already has the uid (every caller does, it's
+    their own argument) can pair it with this warning itself if per-uid
+    debugging is needed locally.
+    """
+    foreground_fraction = float(np.mean(np.abs(normalized) > 1e-6))
+    if foreground_fraction < 0.01 or normalized.std() <= 1e-6:
+        warnings.warn("degenerate/near-empty volume after preprocessing")
+
+
 def load_volume(uid):
     """Load, resample, crop, (optionally denoise,) and normalize the
     volume for `uid`. Returns a `(1, *config.TARGET_SHAPE)` float32
@@ -140,13 +154,44 @@ def load_volume(uid):
     if config.USE_NLM_DENOISING:
         cropped = denoise_volume(cropped)
     normalized = normalize_intensity(cropped)
-    foreground_fraction = float(np.mean(np.abs(normalized) > 1e-6))
-    if foreground_fraction < 0.01 or normalized.std() <= 1e-6:
-        # Never include `uid` in this message: load_volume() runs inside
-        # submission_src/main.py against real competition test volumes,
-        # and the platform scans submission logs for per-sample test-set
-        # information and disqualifies on it -- a caller that already has
-        # `uid` (every caller does, it's the argument) can pair it with
-        # this warning itself if per-uid debugging is needed locally.
-        warnings.warn("degenerate/near-empty volume after preprocessing")
+    _warn_if_degenerate(normalized)
     return normalized[np.newaxis, ...].astype(np.float32)
+
+
+def load_slab(uid):
+    """Load, resample, crop, and normalize a thick 2x2x12mm axial "slab"
+    through the striatum for `uid` -- Wenzel et al. 2019's slab geometry
+    (RESOURCES.md), a 2D analogue of `load_volume`'s 3D crop for
+    `model.DatSlab2DCNN` (roadmap item 6, architecture diversity).
+    Reuses the same `resample_to_spacing`/`crop_or_pad`/`normalize_intensity`
+    building blocks as `load_volume`, only with slab-specific spacing/shape
+    (`config.SLAB_TARGET_SPACING`/`SLAB_TARGET_SHAPE`) and the same
+    striatum-centered `config.CROP_CENTER_MM` offset already validated for
+    the 3D track -- no new center estimate needed. No denoising path (that
+    experiment was rejected for the 3D track and never validated here).
+
+    The 12mm slab thickness is built from `SLAB_TARGET_SHAPE[2]` (6)
+    voxels at `SLAB_TARGET_SPACING[2]` (2.0mm) each, averaged together
+    here, rather than a single 12mm-thick resampled voxel -- see
+    `config.py`'s comment above `SLAB_TARGET_SPACING`: a single coarse
+    voxel makes `crop_or_pad`'s nearest-voxel rounding (+-0.5 voxel, i.e.
+    +-6mm at 12mm spacing) large enough to miss the striatum entirely,
+    confirmed via a synthetic-marker diagnostic (2026-09-11) and consistent
+    with the fold-0 sanity check in
+    `notebooks/24_slab2d_architecture_diversity.ipynb` scoring barely
+    above the base-rate baseline before this fix. Averaging 6 finer
+    (2mm) voxels keeps the same 12mm total physical thickness while
+    cutting that rounding error to +-1mm.
+
+    Returns a `(1, SLAB_TARGET_SHAPE[0], SLAB_TARGET_SHAPE[1])` float32
+    array: the S-I axis is averaged out and a leading channel dim is
+    added, matching `load_volume`'s `(1, *shape)` convention.
+    """
+    path = config.NIFTI_DIR / f"{uid}.nii.gz"
+    img = nib.load(str(path))
+    resampled, _ = resample_to_spacing(img.get_fdata(), img.affine, config.SLAB_TARGET_SPACING)
+    cropped = crop_or_pad(resampled, config.SLAB_TARGET_SPACING, config.CROP_CENTER_MM,
+                           config.SLAB_TARGET_SHAPE)
+    normalized = normalize_intensity(cropped)
+    _warn_if_degenerate(normalized)
+    return normalized.mean(axis=2)[np.newaxis, ...].astype(np.float32)

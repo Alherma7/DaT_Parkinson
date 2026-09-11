@@ -371,6 +371,164 @@ and `code-execution-submission.md` extensions).
     imbalance, and a specific argument against `pos_weight` distorting
     log-loss calibration). Current rung-3 CNN stays the production
     model; `rung4_classweight_*` checkpoints not used.
+  - **Gate fixed (2026-09-10, before experiment 5): `evaluate.py`'s
+    rung-4 gate was mis-specified** — an Opus review found the paired
+    bootstrap CI was computed from a single arbitrarily-chosen CV
+    repeat (whose sign could, and for experiments 1 and 3 did,
+    disagree with the actual 5-repeat mean), and the "2x noise
+    threshold" compared a 5-repeat mean against 2x a *single* repeat's
+    sd instead of the mean's standard error (sd/√5) — a 4.5-7.7σ bar in
+    practice. Replaced with `evaluate.paired_repeat_gate`: a proper
+    one-sample paired t-interval (mean ± t·sd/√n) over per-repeat
+    deltas. Redone correctly, experiments 1 and 4 stay clearly negative
+    (p≈0.71, p≈0.87); experiments 2 and 3 are directionally positive
+    but still don't reach significance at 5 repeats (p≈0.29, p≈0.16) —
+    genuinely underpowered, not hidden by the bug. Also fixed:
+    `train.py::train_one_fold` gained an optional `val_loss_fn` so
+    experiment 4's early stopping no longer selects on the
+    `pos_weight`-reweighted loss; experiment 1 gained a
+    `boost_factor=1.0` sampler-only control; experiment 3's patience
+    was raised to 20 (from `config.PATIENCE=10`) since augmented
+    training was stopping before convergence. Full detail in project
+    memory `project_dat_parkinson_rung4_gate_review.md`. Notebooks
+    09-12 updated to use the fixed gate but not yet re-run.
+  - **Experiment 5 (NL-means denoising): GATE NOT PASSED — flat
+    result, highest run-to-run variance of all 5 experiments.**
+    `notebooks/13_cnn_denoising.ipynb`: patch-wise NL-means denoising
+    (`data.denoise_volume`, Boulkrinat et al. 2025 defaults) added to
+    `data.py`'s shared preprocessing before normalization — the only
+    rung-4 experiment touching the pipeline itself, not just a
+    training-loop knob. Per-volume cost: denoising adds 4.1x the
+    resample+crop cost (1100ms vs. 271ms/volume, n=15 sample);
+    estimated full 1362-volume cache rebuild ~31 min. Fold-0 sanity
+    check was promising in isolation (log loss 0.3614 vs. rung 3's
+    0.4005 on the same fold/seed), but did not hold up over the full
+    5×5: per-repeat deltas (denoised − current CNN) = [-0.0279,
+    -0.0052, +0.0008, -0.0098, +0.0291] — mean -0.0026 (essentially
+    flat), sd 0.0207 (the widest of any rung-4 experiment, roughly
+    double experiments 1/2/4's), 95% CI [-0.0284, +0.0231] comfortably
+    straddling zero. Unlike experiments 2/3, this isn't a case of "real
+    effect, underpowered" — the mean itself is near zero and the sign
+    of the per-repeat delta flips twice. `config.USE_NLM_DENOISING`
+    stays `False` everywhere (including `submission_src/main.py`);
+    `rung4_denoise_*` checkpoints not used.
+  - **Rung 4 concluded (2026-09-10): 0/5 experiments passed the gate.**
+    The rung-3 CNN + classical-baseline blend (`w_cnn=0.70`, real
+    submission log loss 0.4648) remains the production model. If time
+    allows before the 2026-09-16 deadline, the highest-value follow-up
+    per the Opus review is re-running experiments 2 (cosine LR) and 3
+    (augmentation) combined at a higher repeat count (15-30) — both are
+    directionally positive, mechanically independent, and experiment 2
+    reduces variance while experiment 3 increases it — rather than
+    re-litigating experiments 1, 4, or 5.
+- 2026-09-10: **Post-rung-4 strategic review (Opus) + ensemble/calibration
+  roadmap, items 1-7.** Headline finding: the production model had never
+  been correctly measured — the rung-3 gate scored the *mean of 5
+  individual* CNN OOF arrays (log loss 0.4520), but `submission_src/main.py`
+  ships a *25-checkpoint average*, a different quantity nobody had scored.
+  Ranked roadmap: (1) score the honest ensemble OOF, (2) calibration
+  post-processing, (3) ensemble all rung-3+rung-4 checkpoints, (4) re-tune
+  the CNN/baseline blend weight, (5) fixed-epoch full-data training, (6)
+  bounded architecture check (not yet done), (7) flip TTA on
+  flip-augmented checkpoints only. All local-CV, zero submission cost.
+  - **Item 1** (`notebooks/14_ensemble_calibration_diagnosis.ipynb`):
+    honest 5-way rung-3 ensemble OOF = log loss **0.4127**, AUROC 0.8915,
+    ECE 0.0316 (vs. the old single-checkpoint gate's 0.4520 — a free win
+    that was sitting in `np.mean`). Plain probability-space blend
+    (`w_cnn=0.70`) barely improved on that (0.4119) despite AUROC rising
+    to 0.9081, because ECE roughly doubled to 0.0747 — two differently-scaled
+    sources blended without recalibration.
+  - **Items 2+4** (`notebooks/15_calibration_blend_retune.ipynb`):
+    LOFO-validated joint grid search over (T_cnn, T_baseline, w) in logit
+    space. Honest per-repeat LOFO scores [0.4100, 0.4053, 0.3852, 0.4043,
+    0.3984], mean **0.4006** sd 0.0096 — **-0.0244** vs. the old
+    uncalibrated single-weight LOFO blend (0.4250). 4/5 folds picked
+    T_cnn≈1.00, T_baseline≈0.50, w≈0.70 — the classical baseline's logits
+    were scale-mismatched against the CNN's; that mismatch, not the CNN
+    itself, was inflating the blend's ECE. Recomputed the classical
+    baseline's OOF for all 5 seeds (`baseline_oof_seed{42..46}.npy`,
+    fixing a fold-mismatch gap).
+  - **Item 3** (`notebooks/16_multivariant_ensemble.ipynb`): one
+    pre-registered comparison — equal-weight average of all 5 non-denoise
+    rung3+rung4 variant families (rung3, familybias, lrsched, augment,
+    classweight; 25 arrays) vs. rung3-only — log loss **0.4022** vs. 0.4127
+    (**-0.0105**), AUROC 0.8984 vs. 0.8915 (+0.0069), both metrics
+    favorable. **Adopted**: all 5 variants ensembled (125 checkpoints).
+  - **Items 2+4 re-run** (`notebooks/17_calibration_blend_retune_allvariants.ipynb`):
+    same LOFO method against the 5-variant ensemble — **5/5 folds
+    independently picked the identical triple** (T_cnn=0.50,
+    T_baseline=1.00, w=0.45). LOFO scores [0.3884, 0.3783, 0.3718, 0.3742,
+    0.3820], mean **0.3789** sd 0.0066 — **-0.0217** further improvement
+    over item 2's rung3-only calibration. Pooled candidate: log
+    loss=0.3684, AUROC=0.9161, ECE=0.0369.
+  - **Item 5** (`notebooks/18_fixed_epoch_full_data.ipynb`): trained on
+    100% of the outer-train fold, fixed 22-epoch budget (from the real
+    median/mean epoch count across 128 prior fold-trainings) instead of
+    early stopping. Alone: mean 0.4475 sd 0.0122. Pre-registered ensemble
+    comparison: 5-variant (0.4022/0.8984/0.0360) vs. +fixedepoch as a 6th
+    variant (**0.3978/0.9004/0.0305**) — delta -0.0044, all 3 metrics
+    favorable. **Adopted**: 6 variants (150 checkpoints).
+  - **Recalibration re-run** (`notebooks/19_calibration_blend_retune_sixvariants.ipynb`):
+    LOFO scores [0.3810, 0.3760, 0.3682, 0.3678, 0.3772], mean **0.3740**
+    sd 0.0058 (tightest yet) — **-0.0049** vs. item 4's 5-variant result.
+    3/5 folds picked the same triple as notebook 17, 2/5 a nearby one.
+    **Adopted recipe**: T_cnn=0.58, T_baseline=0.88, w=0.53 (mean of the 5
+    triples), on the 6-variant ensemble.
+  - **Item 7** (`notebooks/20_flip_tta_augment.ipynb`): L-R flip TTA,
+    applied only to the `rung4_augment` checkpoints (the only ones trained
+    with flips, hence the only flip-equivariant ones — EDA 6b established
+    the discriminative asymmetry signal is flip-invariant). TTA(avg) beat
+    plain in 5/5 seeds individually. Pre-registered ensemble comparison:
+    plain augment (0.3978/0.9004/0.0305) vs. TTA'd augment
+    (0.3976/0.9005/0.0293) — delta -0.0002 log loss, ECE also improved;
+    that stage's own gate rule said adopt, and TTA'd OOF was saved as
+    `rung4_augment_tta_oof_seed{42..46}.npy`. **Superseded by the
+    recalibration below — final call is NOT adopted, see that entry.**
+  - **Recalibration re-run #2** (`notebooks/21_calibration_blend_retune_augmenttta.ipynb`):
+    re-fit notebook 19's exact LOFO method against the flip-TTA
+    composition. **Honest LOFO mean=0.3739, sd=0.0059 vs. notebook 19's
+    plain-augment 0.3740, sd=0.0058 — delta -0.0001, inside the sd, flat.**
+    (The pooled candidate, 0.3642 vs. notebook 19's 0.3646, looks like a
+    win but both carry this project's own flagged mild-optimism caveat —
+    the LOFO mean is what decides.) Parameter selection was also less
+    coherent (3 distinct triples across 5 folds vs. notebook 19's two
+    clusters), consistent with a flat loss-surface region rather than a
+    real shift. Mechanistic read: TTA's raw-ensemble effect acted mainly
+    through ECE, which the LOFO-fit calibration already corrects for on
+    either composition — so once calibrated, there's nothing left for TTA
+    to add. **Final decision (user confirmed): drop flip-TTA.** Applying
+    this project's own step-6 gate rule ("a win smaller than the measured
+    noise floor is not a win") at the LOFO level — the number that
+    actually decides the shipped recipe — flip-TTA does not clear it, and
+    it has a real cost (~doubles in-container inference time for the
+    augment checkpoints, 25 of 150, against the tight 3h submission
+    budget). **Final adopted recipe is notebook 19's: plain-augment
+    6-variant ensemble (150 checkpoints, no TTA) + calibrated blend
+    T_cnn=0.58, T_baseline=0.88, w=0.53, LOFO mean 0.3740.** Flip-TTA
+    stays logged as a negative result at the recipe level (step 7) — the
+    inference code and OOF arrays stay on disk, unused, not wired into
+    `submission_src/main.py`.
+  - **Diminishing-returns pattern across items 1-5+7**: -0.0393 (item 1) →
+    -0.0105 (item 3) → -0.0044 (item 5) → -0.0049 (recalibration #1) →
+    -0.0001 (item 7 + recalibration #2, net) — the item-7/TTA step is
+    where the marginal gain finally bottoms out at noise; items 1-5 are
+    still real wins by this project's own LOFO bar. **Correction: items
+    1-5 and 7 are addressed; item 6 (bounded architecture check — a 2D-slab
+    CNN or similar as an additional ensemble member) was never actually
+    run and remains open. An earlier pass through this log claimed
+    "items 1-7 all addressed" — that was wrong.**
+  - **Status: NOT YET IMPLEMENTED.** All of notebooks 14-21 are
+    local-CV-only (zero submission cost). Remaining work before any of
+    this can be submitted: wire the logit-space calibrated blend into
+    `src/submission.py::combine_predictions` (signature change, TDD),
+    ensemble across all 6 variants' checkpoints (not just rung3's 25,
+    plain augment — no TTA inference path needed) in
+    `submission_src/main.py`, extend `scripts/build_submission_assets.py`'s
+    checkpoint-list packaging, replace the classical-baseline pickle
+    (`sklearn` 1.9.0→1.8.0 version mismatch already warned once) with a
+    plain `.npz`-params reconstruction, rebuild submission assets, rerun
+    the local Docker smoke test then the platform smoke test — all before
+    spending one of the 2-3 remaining real submissions.
 
 - [x] Run `notebooks/01_eda_volumes.ipynb` and record the answers to its
       questions here — see Progress above (2026-09-08).

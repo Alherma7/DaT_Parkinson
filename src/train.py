@@ -12,7 +12,7 @@ import torch
 
 def train_one_fold(model, train_loader, val_loader, optimizer, loss_fn,
                     epochs, patience, device, use_amp,
-                    scheduler=None, seed=None):
+                    scheduler=None, seed=None, val_loss_fn=None):
     """Trains `model` (already on `device`) for up to `epochs` epochs,
     stopping early if validation loss hasn't improved in `patience`
     epochs. Returns `(best_state_dict, history)` where `history` =
@@ -28,6 +28,13 @@ def train_one_fold(model, train_loader, val_loader, optimizer, loss_fn,
     `scheduler`, if given, has `.step()` called once per epoch, after the
     optimizer step.
 
+    `val_loss_fn`, if given, is used for the validation pass instead of
+    `loss_fn` -- for a training loss that reweights classes (e.g.
+    `BCEWithLogitsLoss(pos_weight=...)`), pass an unweighted loss here so
+    early stopping selects the checkpoint that's best under the actual
+    (unweighted) metric being optimized for, not one distorted toward
+    whichever class the training loss upweights. Defaults to `loss_fn`.
+
     Validation loss is computed outside autocast (full precision) so AMP
     doesn't add noise to the early-stopping signal, and is a stopping
     signal only -- the number to report/gate against is always recomputed
@@ -36,6 +43,8 @@ def train_one_fold(model, train_loader, val_loader, optimizer, loss_fn,
     on saturated predictions: BCEWithLogitsLoss clamps its internal log
     at -100, sklearn's log_loss clips probabilities at machine epsilon).
     """
+    if val_loss_fn is None:
+        val_loss_fn = loss_fn
     if seed is not None:
         torch.manual_seed(seed)
         for loader in (train_loader, val_loader):
@@ -71,7 +80,7 @@ def train_one_fold(model, train_loader, val_loader, optimizer, loss_fn,
         with torch.no_grad():
             for x, y in val_loader:
                 x, y = x.to(device), y.to(device)
-                loss = loss_fn(model(x), y)
+                loss = val_loss_fn(model(x), y)
                 val_loss_sum += loss.item() * x.shape[0]
                 val_n += x.shape[0]
 

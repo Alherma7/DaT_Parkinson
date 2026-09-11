@@ -1,6 +1,8 @@
 """Evaluation metric(s) and cross-validation fold design for this project."""
 
 import numpy as np
+from scipy import stats
+from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
 from sklearn.metrics import log_loss, roc_auc_score
 from sklearn.model_selection import StratifiedKFold
 
@@ -93,6 +95,47 @@ def paired_bootstrap_ci(y_true, probs_a, probs_b, seed, n_bootstrap=1000):
     return float(ci_low), float(ci_high)
 
 
+def paired_repeat_gate(deltas, confidence=0.95):
+    """Rung-4 gate statistic: is a candidate's per-repeat delta
+    (candidate_log_loss - baseline_log_loss, one value per CV repeat,
+    same fold/init seeds on both sides) reliably negative?
+
+    Replaces the rung-4 gate originally used in notebooks 09-12, which
+    had two problems an Opus review (2026-09-10, see project memory)
+    caught: (1) it took `paired_bootstrap_ci` on a single arbitrarily-
+    chosen repeat instead of aggregating across repeats, so its verdict
+    could -- and for two of the four experiments, did -- disagree in
+    sign with the actual multi-repeat mean; (2) its "2x noise threshold"
+    compared a mean-of-N-repeats against 2x a single repeat's standard
+    deviation, instead of the standard error of that mean (sd/sqrt(n)),
+    making the bar 4.5-7.7 sigma in practice -- effectively unclearable
+    by a real but modest effect at n=5 repeats.
+
+    This is a one-sample paired t-interval on `deltas` directly (Student's
+    t, not bootstrap, appropriate for the small repeat counts -- typically
+    5-30 -- these gates run at). The gate passes when the whole CI is
+    negative (candidate beats baseline on every plausible mean under this
+    sample).
+
+    Returns a dict: `mean`, `sd`, `ci_low`, `ci_high`, `passed`.
+    """
+    deltas = np.asarray(deltas, dtype=float)
+    n = len(deltas)
+    mean = float(deltas.mean())
+    sd = float(deltas.std(ddof=1)) if n > 1 else 0.0
+    sem = sd / np.sqrt(n)
+    t_crit = float(stats.t.ppf(1 - (1 - confidence) / 2, df=n - 1)) if n > 1 else 0.0
+    ci_low = mean - t_crit * sem
+    ci_high = mean + t_crit * sem
+    return {
+        "mean": mean,
+        "sd": sd,
+        "ci_low": ci_low,
+        "ci_high": ci_high,
+        "passed": bool(ci_high < 0),
+    }
+
+
 def compute_pos_weight(labels):
     """`torch.nn.BCEWithLogitsLoss`'s `pos_weight` for `class_weight=
     "balanced"`: n_negative / n_positive, computed from the actual
@@ -118,6 +161,78 @@ def family_oversample_weights(family, boosted_families, boost_factor):
     """
     family = np.asarray(family, dtype=object)
     return np.where(np.isin(family, list(boosted_families)), boost_factor, 1.0)
+
+
+def oof_predict(X, y, folds, regularized=False, cs=np.logspace(-2, 2, 9), inner_cv=5):
+    """Honest row-wise-CV out-of-fold prediction: for each `(train_idx,
+    test_idx)` in `folds`, fit a logistic-regression classifier on the
+    train rows and predict the held-out rows, reassembled into one array
+    in original row order. Promoted from
+    `notebooks/23_paired_gate_shipped_recipe_candidates.ipynb` (2026-09-11)
+    -- `y` is now an explicit parameter (was an implicit notebook global).
+
+    `regularized=True` uses `LogisticRegressionCV` (L2 via `l1_ratios=(0.0,)`,
+    `cs` grid, `inner_cv` folds tuned *inside* each outer fold's train rows
+    only -- a proper nested design, never selects the penalty on rows it's
+    then scored on). Use this for a candidate feature matrix whose size/
+    collinearity makes an unregularized fit risky; the default
+    (`regularized=False`) plain fit matches how this project's shipped
+    2-feature blend (`submission.combine_predictions`) was fit.
+    """
+    X = np.asarray(X)
+    y = np.asarray(y)
+    oof = np.empty(len(y), dtype=float)
+    for train_idx, test_idx in folds:
+        if regularized:
+            # l1_ratios=(0.0,) is this sklearn build's non-deprecated way
+            # to request pure L2 (it deprecated the `penalty=` kwarg on
+            # LogisticRegressionCV in favor of l1_ratios/Cs); only
+            # predict_proba is used below, never the legacy
+            # .scores_/.coefs_paths_ attribute shapes, so the non-legacy
+            # attribute layout is safe to opt into.
+            clf = LogisticRegressionCV(Cs=cs, cv=inner_cv, l1_ratios=(0.0,),
+                                        max_iter=2000, scoring="neg_log_loss",
+                                        use_legacy_attributes=False)
+        else:
+            clf = LogisticRegression(C=np.inf, max_iter=1000)
+        clf.fit(X[train_idx], y[train_idx])
+        oof[test_idx] = clf.predict_proba(X[test_idx])[:, 1]
+    return oof
+
+
+def paired_gate(label, candidate_oof, reference_oof, y, min_effect=0.003,
+                 seed=config.RANDOM_STATE, verbose=True):
+    """The corrected ensemble/recipe-comparison gate: a paired bootstrap
+    over rows (`paired_bootstrap_ci`), not a paired delta compared against
+    the *unpaired* across-fold sd of absolute scores (the bug found in
+    `notebooks/22_calibration_refit_rowwise_cv.ipynb`'s `op06denoise` cell,
+    2026-09-11 -- that denominator is driven by which rows land in which
+    fold, identical for both arms, and can't resolve effects below its own
+    ~0.011 SEM). Promoted from `notebooks/23_paired_gate_shipped_recipe_candidates.ipynb`.
+
+    Adopt only if the whole 95% CI is negative (candidate reliably beats
+    reference on every plausible row resample) AND the point delta exceeds
+    `min_effect` in magnitude -- below `min_effect`, this project's own
+    measured ~92% CV-to-leaderboard transfer ratio (submissions 1-2) would
+    likely leave nothing visible on the real leaderboard anyway.
+
+    Returns a dict: `label`, `score_candidate`, `score_reference`, `delta`,
+    `ci_low`, `ci_high`, `clears`.
+    """
+    score_candidate = log_loss_score(y, candidate_oof)
+    score_reference = log_loss_score(y, reference_oof)
+    delta = score_candidate - score_reference
+    ci_low, ci_high = paired_bootstrap_ci(y, candidate_oof, reference_oof, seed=seed)
+    clears = (ci_high < 0) and (abs(delta) > min_effect)
+    if verbose:
+        print(f"{label}")
+        print(f"  candidate row-CV log loss = {score_candidate:.4f}   reference = {score_reference:.4f}")
+        print(f"  delta (candidate - reference) = {delta:+.4f}   "
+              f"95% paired-bootstrap CI = [{ci_low:+.4f}, {ci_high:+.4f}]")
+        print(f"  -> {'CLEARS the gate (adopt)' if clears else 'does NOT clear the gate (keep reference)'} "
+              f"(rule: whole CI < 0 AND |delta| > {min_effect})\n")
+    return {"label": label, "score_candidate": score_candidate, "score_reference": score_reference,
+            "delta": delta, "ci_low": ci_low, "ci_high": ci_high, "clears": clears}
 
 
 def make_folds(target, family, n_splits=config.N_FOLDS, random_state=config.RANDOM_STATE):

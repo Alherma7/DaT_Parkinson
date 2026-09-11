@@ -9,6 +9,7 @@ asserted without depending on real gradient-descent dynamics.
 
 from unittest import mock
 
+import pytest
 import torch
 
 import train
@@ -157,6 +158,39 @@ def test_scheduler_is_stepped_once_per_epoch():
     )
 
     assert scheduler.step.call_count == len(history["train_loss"])
+
+
+def test_val_loss_fn_is_used_for_validation_instead_of_loss_fn():
+    net = TinyNet()
+    train_loader, val_loader = _make_loaders(n_train=4, batch_size=4, n_val=4)
+    optimizer = ScriptedOptimizer(net, weight_sequence=[0.1, 0.2, 0.3, 0.4, 0.5])
+    # loss_fn (training) sees a different scripted sequence than val_loss_fn;
+    # if the val pass ever calls loss_fn instead, best epoch would be index 1 not 3.
+    loss_fn = ScriptedValLoss(net, val_sequence=[1.0, 0.2, 0.9, 0.9, 0.9])
+    val_loss_fn = ScriptedValLoss(net, val_sequence=[1.0, 0.9, 0.9, 0.2, 0.9])
+
+    best_state, history = train.train_one_fold(
+        net, train_loader, val_loader, optimizer, loss_fn,
+        epochs=5, patience=10, device=torch.device("cpu"), use_amp=False,
+        val_loss_fn=val_loss_fn,
+    )
+
+    assert history["val_loss"] == pytest.approx(val_loss_fn.val_sequence[:5])
+    assert torch.allclose(best_state["linear.weight"], torch.full((1, 4), 0.4))
+
+
+def test_val_loss_fn_defaults_to_loss_fn_when_not_given():
+    net = TinyNet()
+    train_loader, val_loader = _make_loaders(n_train=4, batch_size=4, n_val=4)
+    optimizer = ScriptedOptimizer(net, weight_sequence=[0.1, 0.2, 0.3, 0.4, 0.5])
+    loss_fn = ScriptedValLoss(net, val_sequence=[1.0, 0.2, 0.9, 0.9, 0.9])
+
+    best_state, history = train.train_one_fold(
+        net, train_loader, val_loader, optimizer, loss_fn,
+        epochs=5, patience=10, device=torch.device("cpu"), use_amp=False,
+    )
+
+    assert torch.allclose(best_state["linear.weight"], torch.full((1, 4), 0.2))
 
 
 def test_seed_reseeds_an_explicit_loader_generator():

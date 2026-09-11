@@ -241,7 +241,51 @@ this project gets an entry here before it's used, per the
     (64/64/96/128 3×3 filters, batch norm, 2×2 max pool) → flatten → 1024
     dense → 2-unit softmax, 2,872,642 parameters, Adam, categorical
     cross-entropy, best-validation-checkpoint kept (same model-selection
-    rule as `deep-learning-imaging.md`). A lighter-weight comparison point
+    rule as `deep-learning-imaging.md`). **Implemented 2026-09-11** as
+    `model.DatSlab2DCNN`/`data.load_slab` (roadmap item 6, architecture
+    diversity, gated in `notebooks/24_slab2d_architecture_diversity.ipynb`)
+    — two deliberate deviations logged in the class docstring
+    (`AdaptiveAvgPool2d` instead of a fixed flatten size; single-logit
+    `BCEWithLogitsLoss` instead of the 2-unit softmax head). **Geometry bug
+    found and fixed same day**: the initial implementation took Wenzel's
+    "12mm slab" as one literal 12mm-thick resampled voxel, which made
+    `data.py::crop_or_pad`'s nearest-voxel rounding (±6mm at that spacing)
+    large enough to miss the striatum outright — a fold-0 sanity check
+    scoring barely above the base-rate baseline flagged it, and a
+    synthetic-marker diagnostic confirmed the miss before any fix was
+    attempted (systematic-debugging discipline). Fixed by resampling to
+    2mm z-spacing and averaging 6 voxels (same 12mm total thickness,
+    ±1mm rounding error) — see `config.py`'s comment above
+    `SLAB_TARGET_SPACING` for the full diagnosis. **Gated result (same
+    day, after the fix): NOT adopted — but a SECOND Opus review
+    (2026-09-11) found the negative result is not decisive and should
+    NOT be read as "this architecture doesn't work here."** 5×5
+    nested-CV pooled log loss mean=0.6765 sd=0.0048 (worse than a single
+    hand-crafted scalar, `abs_asym` alone at 0.5889 — the strongest tell
+    that the crop mostly isn't landing on real striatal tissue); as a 7th
+    ensemble member (diluted to a fixed, unlearned 1/7 weight via
+    `submission.pool_logit_mean`, not tested as its own blend feature),
+    `evaluate.paired_gate` gave delta=+0.0013, 95% CI=[+0.0001, +0.0025].
+    **Root cause per the second review**: `CROP_CENTER_MM` is a
+    *population-median* offset (notebooks/01 section 6a) with z sd
+    ~32.5mm — a 12mm-thick window fixed at that one point contains real
+    striatal tissue for only ~14-47% of subjects (vs. ~89% for the 3D
+    track's 108mm-thick crop, which tolerates the same offset error by
+    sheer thickness); the rounding-precision fix (±6mm→±1mm) was real but
+    two orders of magnitude smaller than this actual error term, which is
+    why the fold-0 sanity check barely moved after the fix (0.6786→0.6791).
+    The tight gate CI reflects a *consistently uninformative* input, not a
+    validated negative — this design presumes spatial normalization to a
+    common frame (as Wenzel's own PPMI data has), which this pipeline
+    never performs. **Untested and possibly valuable**: per-subject
+    centering via `features.striatum_mask` instead of the fixed population
+    median (never attempted — would need a real retrain to evaluate); also
+    untested: whether the *production* 3D crop itself misses the striatum
+    for a meaningful fraction of subjects (same root cause, smaller
+    relative impact since the 3D crop is 9x thicker) — flagged as a
+    higher-value audit than slab2d itself. Full second-review findings in
+    `notebooks/24_slab2d_architecture_diversity.ipynb`'s reflection cell.
+    A lighter-weight comparison point
     to Boulkrinat et al.'s from-scratch 3D CNN if the full 3D track proves
     too expensive within the 3h submission budget.
   - **Scope caveat**: their "multi-site variability" is *simulated*
@@ -334,6 +378,71 @@ this project gets an entry here before it's used, per the
   underperforms"), not the largest 2.46mm family — holding out 2.46mm
   would test the transfer direction Wenzel et al. already found working
   well (0.945 accuracy), telling us nothing new.
+
+- **Khachnaoui et al. 2023, "Enhanced Parkinson's Disease Diagnosis through
+  Convolutional Neural Network Models Applied to SPECT DaTSCAN Images"**
+  (EfficientNet-B0+MobileNet-V2 "bilinear fusion", 99.14% on 2720 PPMI
+  slices) -- reviewed in depth 2026-09-11. "Bilinear fusion" is classical
+  bilinear CNN pooling (Lin et al.): outer-product interaction of two
+  backbones' feature maps at matching spatial resolution, sum-pooled,
+  signed-sqrt + L2-normalized. Their literal method (embedding-level fusion
+  of two ImageNet-pretrained backbones) does not transfer to this project:
+  our 30 CNN members are independently initialized, so their penultimate
+  embeddings live in mutually unaligned spaces, and no embedding is saved
+  anywhere in this codebase. The scalar remnant of the idea (second-order
+  interaction terms between the CNN and baseline blend scores, plus the
+  classical baseline's own engineered features) is CV-tested in
+  `notebooks/23_paired_gate_shipped_recipe_candidates.ipynb` (candidate 1).
+  Why: closest sourced precedent for a feature-interaction fusion mechanism
+  beyond this project's current 2-feature logistic blend.
+- **Ithapu, Singh & Johnson 2015, "Randomized Deep Learning Methods for
+  Clinical Trial Enrichment and Design in Alzheimer's Disease"** (Ch. 15,
+  *Deep Learning for Medical Image Analysis*, Zhou/Greenspan/Shen eds.,
+  Academic Press 2017) -- full chapter read 2026-09-11 (user-provided
+  transcript). Proposes randomized deep networks (rDA/rDr): many weak
+  learners trained on randomly-partitioned voxel blocks, combined via a
+  ridge-regression fit rather than uniform averaging, to construct a
+  minimum-variance-unbiased (MVUB) estimator (eq. 15.6-15.8) -- validated on
+  ADNI for reducing AD clinical-trial sample sizes vs. an MKL baseline. The
+  voxel-blocking architecture itself does not transfer (it's a workaround
+  for fully-connected/autoencoder nets in a d>>n regime that this project's
+  3D CNN already solves via convolutional weight sharing). The transferable
+  piece is the combination mechanism: ridge/L2-regularized weighting across
+  near-decorrelated ensemble members instead of uniform averaging. CV-tested
+  at the 6-variant level (not the 30-member level, to avoid the same
+  overfitting mechanism the theory warns about) in
+  `notebooks/23_paired_gate_shipped_recipe_candidates.ipynb` (candidate 2).
+  Why: only sourced precedent found for reweighting (vs. adding) ensemble
+  members as a variance-reduction mechanism.
+- **Budd et al. 2023, "Automated identification of uncertain cases in deep
+  learning-based classification of dopamine transporter SPECT..."** (EJNMMI,
+  DOI 10.1007/s00259-023-06566-w, code: github.com/ThomasBudd/dat_spect_ud)
+  -- the most directly on-topic paper found in the 2026-09-11 research pass:
+  real multi-site [123I]FP-CIT DAT-SPECT (not PPMI). Trains a 5-CNN ensemble
+  plus two additional ensembles with asymmetric losses (high-sensitivity,
+  high-specificity); disagreement between the two flags uncertain cases for
+  review, catching 90% of misclassifications while flagging only 4.3% of
+  cases -- beats sigmoid-thresholding, MC-dropout, and model-averaging as an
+  uncertainty measure. Not free (2 new training runs). The free precursor --
+  whether disagreement already present across this project's 30 existing CNN
+  members (per-row logit sd) carries information a log-loss-scored blend can
+  use -- is CV-tested in
+  `notebooks/23_paired_gate_shipped_recipe_candidates.ipynb` (candidate 3),
+  gated before any GPU time is spent on new asymmetric-loss ensembles.
+  Why: only sourced technique found that targets prediction uncertainty
+  specifically for DAT-SPECT classification, on real (not PPMI) multi-site
+  data matching this project's own data shape.
+- **Tajbakhsh et al. 2016, "Convolutional neural networks for medical image
+  analysis: full training or fine tuning?"** (IEEE TMI 35(5):1299-1312) --
+  found via a cerebral-microbleed-detection book chapter's reference list
+  (Zhou/Greenspan/Shen eds. 2017, Ch. 6.4), reviewed 2026-09-11. The classic
+  reference on when fine-tuning beats training from scratch in medical
+  imaging.
+  Why: a fourth independent source reinforcing this project's already-made
+  decision to train the 3D CNN from scratch (alongside Chegodaev et al.,
+  Boulkrinat et al., and Wenzel et al., all already logged above) -- no new
+  action, logged for completeness per this skill's "every technique needs a
+  source" rule.
 
 ## Comparable projects
 

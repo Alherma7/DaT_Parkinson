@@ -211,6 +211,64 @@ def test_load_volume_applies_denoising_only_when_flag_is_enabled(tmp_path, monke
     assert calls == [1]
 
 
+def test_load_slab_returns_2d_shape_with_channel_dim(tmp_path, monkeypatch):
+    """Uniform noise everywhere (not a small localized block, unlike
+    load_volume's equivalent test) so this test's outcome doesn't depend
+    on the exact SLAB_TARGET_SPACING/CROP_CENTER_MM arithmetic landing a
+    specific signal region inside the much thinner (12mm-thick) slab crop
+    -- shape/dtype/finiteness is what's under test here, not signal
+    placement (that's covered by data.py's crop_or_pad tests directly).
+    """
+    import nibabel as nib
+
+    rng = np.random.RandomState(0)
+    volume = rng.uniform(400.0, 600.0, size=(60, 60, 40)).astype(np.float32)
+    affine = np.eye(4) * 2.46
+    affine[3, 3] = 1.0
+    nib.save(nib.Nifti1Image(volume, affine), tmp_path / "synthetic_uid.nii.gz")
+    monkeypatch.setattr(data.config, "NIFTI_DIR", tmp_path)
+
+    out = data.load_slab("synthetic_uid")
+
+    assert out.shape == (1, data.config.SLAB_TARGET_SHAPE[0], data.config.SLAB_TARGET_SHAPE[1])
+    assert out.dtype == np.float32
+    assert np.isfinite(out).all()
+
+
+def test_load_slab_warns_on_degenerate_all_zero_volume(tmp_path, monkeypatch):
+    import nibabel as nib
+
+    volume = np.zeros((60, 60, 40), dtype=np.float32)  # no signal anywhere
+    affine = np.eye(4) * 2.46
+    affine[3, 3] = 1.0
+    nib.save(nib.Nifti1Image(volume, affine), tmp_path / "degenerate_uid.nii.gz")
+    monkeypatch.setattr(data.config, "NIFTI_DIR", tmp_path)
+
+    with pytest.warns(UserWarning, match="degenerate/near-empty volume"):
+        out = data.load_slab("degenerate_uid")
+
+    assert out.shape == (1, data.config.SLAB_TARGET_SHAPE[0], data.config.SLAB_TARGET_SHAPE[1])
+
+
+def test_load_slab_degenerate_warning_never_names_the_uid(tmp_path, monkeypatch):
+    """Same disqualification-risk guard as load_volume's -- this function
+    would run inside submission_src/main.py if roadmap item 6 is adopted.
+    """
+    import nibabel as nib
+
+    volume = np.zeros((60, 60, 40), dtype=np.float32)
+    affine = np.eye(4) * 2.46
+    affine[3, 3] = 1.0
+    secret_uid = "some_real_test_patient_uid"
+    nib.save(nib.Nifti1Image(volume, affine), tmp_path / f"{secret_uid}.nii.gz")
+    monkeypatch.setattr(data.config, "NIFTI_DIR", tmp_path)
+
+    with pytest.warns(UserWarning) as recorded:
+        data.load_slab(secret_uid)
+
+    assert all(secret_uid not in str(w.message) for w in recorded)
+
+
 def test_load_volume_degenerate_warning_never_names_the_uid(tmp_path, monkeypatch):
     """Regression guard: submission_src/main.py runs this exact function
     against real test volumes, and the competition platform scans

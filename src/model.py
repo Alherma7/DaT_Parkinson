@@ -111,6 +111,60 @@ def build_model():
     return DatCNN()
 
 
+class DatSlab2DCNN(nn.Module):
+    """2D CNN over a thick axial "slab" through the striatum (roadmap
+    item 6, README.md -- architecture diversity for the ensemble, never
+    run until now). Input is `data.load_slab`'s output,
+    `config.SLAB_TARGET_SHAPE[:2]` = (68, 35), 1 channel.
+
+    Channel schedule (1->64->64->96->128) and the 3x3-conv/batchnorm/
+    2x2-maxpool blocks follow Wenzel et al. 2019 (RESOURCES.md) directly.
+    Two deliberate deviations from their exact design, both to fit this
+    project's existing pipeline rather than for performance reasons:
+    (1) `AdaptiveAvgPool2d` before the dense head instead of a hand-tuned
+    flatten size -- mirrors `DatCNN`'s own `AdaptiveAvgPool3d(1)` choice,
+    robust to the exact slab crop shape; (2) a single raw-logit output
+    (`BCEWithLogitsLoss`), not their 2-unit softmax + categorical
+    cross-entropy -- mechanically equivalent for binary classification,
+    and keeps this variant's OOF array directly poolable alongside the
+    other 6 (all single-logit) variants with no special-casing.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=3, padding=1), nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True), nn.MaxPool2d(2),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True), nn.MaxPool2d(2),
+            nn.Conv2d(64, 96, kernel_size=3, padding=1), nn.BatchNorm2d(96),
+            nn.ReLU(inplace=True), nn.MaxPool2d(2),
+            nn.Conv2d(96, 128, kernel_size=3, padding=1), nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True), nn.AdaptiveAvgPool2d((3, 3)),
+        )
+        self.classifier = nn.Sequential(
+            nn.Flatten(), nn.Linear(128 * 3 * 3, 1024), nn.ReLU(inplace=True),
+            nn.Dropout(0.4), nn.Linear(1024, 1),
+        )
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, (nn.Conv2d, nn.Linear)):
+                nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        return self.classifier(self.features(x)).squeeze(-1)
+
+
+def build_slab_model():
+    """`DatSlab2DCNN` factory -- fresh instance each call, mirroring
+    `build_model()`'s existing convention."""
+    return DatSlab2DCNN()
+
+
 PRODUCTION_VARIANT_PREFIXES = [
     "rung3", "rung4_familybias", "rung4_lrsched", "rung4_augment",
     "rung4_classweight", "rung4_fixedepoch",
@@ -118,6 +172,16 @@ PRODUCTION_VARIANT_PREFIXES = [
    # composition, confirmed (denoise excluded) in
    # notebooks/22_calibration_refit_rowwise_cv.ipynb (2026-09-10) --
    # see docs/superpowers/specs/2026-09-10-calibrated-ensemble-blend-design.md
+
+PRODUCTION_VARIANT_BUILD_FNS = {prefix: build_model for prefix in PRODUCTION_VARIANT_PREFIXES}
+PRODUCTION_VARIANT_BUILD_FNS["slab2d"] = build_slab_model
+# Per-prefix architecture factory, consulted by submission_src/main.py
+# instead of calling build_model() unconditionally, so a checkpoint's
+# architecture is derived from its own filename prefix rather than
+# assumed uniform. Added now (additive, no behavior change -- "slab2d" is
+# not yet in PRODUCTION_VARIANT_PREFIXES/production_checkpoint_filenames())
+# so it's ready if notebooks/24_slab2d_architecture_diversity.ipynb's gate
+# clears; harmless if it never does.
 
 
 def variant_checkpoint_filenames(prefix, seeds=range(config.SEED, config.SEED + 5),

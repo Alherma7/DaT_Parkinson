@@ -119,6 +119,51 @@ BACKGROUND_MAX_FRACTION = 0.05
 # separate denoising code path to drift from this flag.
 USE_NLM_DENOISING = False
 
+# --- Roadmap item 6: 2D thick-slab CNN, architecture diversity ---------------
+# Wenzel et al. 2019 (RESOURCES.md): a 2D CNN over a single thick axial
+# "slab" through the striatum -- 2x2x12mm voxels, i.e. high in-plane
+# resolution but only a 12mm-thick slice along S-I, unlike the full 3D
+# TARGET_SHAPE volume above. Same L-R/A-P field of view as CROP_SIZE_MM
+# (136x70mm vs 135x70mm -- rounded to whole voxels at this coarser
+# spacing) and the same striatum-centered CROP_CENTER_MM offset reused
+# unchanged -- no new center estimate needed, model.py::DatSlab2DCNN.
+#
+# 12mm as a SINGLE resampled voxel (the literal reading of "2x2x12mm
+# voxels") was tried first and rejected after the fold-0 sanity check
+# scored barely above the base-rate baseline (2026-09-11): crop_or_pad's
+# nearest-voxel rounding (+-0.5 voxel = +-6mm at this spacing) is
+# negligible against the 3D track's 44-voxel/108mm-thick crop, but
+# catastrophic against a 1-voxel/12mm-thick one. Resampling to a FINER
+# 2mm z-spacing and averaging 6 voxels (6x2mm=12mm, the same total
+# physical thickness Wenzel specifies) in data.load_slab fixed that
+# +-6mm rounding error down to +-1mm -- but a second Opus review
+# (2026-09-11) found this was NOT the dominant error term and the slab
+# track should be considered unvalidated, not negatively validated:
+# CROP_CENTER_MM is the *median* row of notebooks/01_eda_volumes.ipynb
+# section 6a's per-volume striatum-centroid-offset table, whose z
+# component has sd ~32.5mm (5-95th pct range roughly -97mm to +4mm) --
+# a 12mm-thick window fixed at that one population median point contains
+# real striatal tissue for only ~14-47% of subjects by a normal
+# approximation to that spread (vs. ~89% for the 3D track's 108mm-thick
+# crop, which tolerates the same offset error by sheer thickness).
+# `load_slab`'s degenerate-crop rate (2.1%, up from <1% under the
+# unfixed geometry) is fully explained by this: `normalize_intensity`
+# only returns its input unchanged (triggering the warning) on a
+# LITERALLY all-zero crop, so that 2.1% is "missed the head entirely",
+# not "imprecisely centered" -- and the offset distribution is strongly
+# left-skewed (mean -25.1mm vs median -15.5mm), so the unfixed 1-voxel
+# geometry (which happened to sit nearer -18 to -24mm) was, by accident,
+# closer to the population's center of mass than this "fixed" one is.
+# Bottom line: this geometry presumes spatial normalization to a common
+# frame, which this pipeline never performs -- the rounding-precision fix
+# above is real but was not the reason notebooks/24's gate came back
+# negative. See RESOURCES.md's Wenzel entry and
+# notebooks/24_slab2d_architecture_diversity.ipynb's reflection cell for
+# the full second-review findings and what remains untested (per-subject
+# centering via features.striatum_mask, never attempted).
+SLAB_TARGET_SPACING = (2.0, 2.0, 2.0)
+SLAB_TARGET_SHAPE = (68, 35, 6)
+
 # --- Deep-learning defaults (see deep-learning-imaging.md); tune after
 # representation work, not before. ---------------------------------------------
 SEED = RANDOM_STATE

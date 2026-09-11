@@ -4,6 +4,7 @@ import math
 
 import numpy as np
 import pytest
+from sklearn.linear_model import LogisticRegression
 
 import evaluate
 
@@ -206,3 +207,151 @@ def test_paired_bootstrap_ci_low_does_not_exceed_high():
     ci_low, ci_high = evaluate.paired_bootstrap_ci(y_true, probs_a, probs_b, seed=42)
 
     assert ci_low <= ci_high
+
+
+# --- oof_predict ----------------------------------------------------------
+
+def test_oof_predict_returns_valid_probabilities_for_every_row():
+    rng = np.random.RandomState(0)
+    n = 60
+    X = rng.normal(size=(n, 2))
+    y = (X[:, 0] + rng.normal(scale=0.1, size=n) > 0).astype(int)
+    folds = evaluate.make_folds(y, np.array(["A"] * n), n_splits=5, random_state=42)
+
+    oof = evaluate.oof_predict(X, y, folds)
+
+    assert oof.shape == (n,)
+    assert (oof >= 0).all() and (oof <= 1).all()
+
+
+def test_oof_predict_regularized_also_returns_valid_probabilities():
+    rng = np.random.RandomState(1)
+    n = 60
+    X = rng.normal(size=(n, 5))
+    y = (X[:, 0] + rng.normal(scale=0.1, size=n) > 0).astype(int)
+    folds = evaluate.make_folds(y, np.array(["A"] * n), n_splits=5, random_state=42)
+
+    oof = evaluate.oof_predict(X, y, folds, regularized=True)
+
+    assert oof.shape == (n,)
+    assert (oof >= 0).all() and (oof <= 1).all()
+
+
+def test_oof_predict_matches_manual_per_fold_computation():
+    """The honest-OOF contract: each row's prediction must come from a
+    classifier fit only on its fold's train rows."""
+    rng = np.random.RandomState(3)
+    n = 50
+    X = rng.normal(size=(n, 2))
+    y = rng.binomial(1, 0.5, size=n)
+    folds = evaluate.make_folds(y, np.array(["A"] * n), n_splits=5, random_state=42)
+
+    oof = evaluate.oof_predict(X, y, folds)
+
+    expected = np.empty(n)
+    for train_idx, test_idx in folds:
+        clf = LogisticRegression(C=np.inf, max_iter=1000)
+        clf.fit(X[train_idx], y[train_idx])
+        expected[test_idx] = clf.predict_proba(X[test_idx])[:, 1]
+    np.testing.assert_allclose(oof, expected)
+
+
+# --- paired_gate -----------------------------------------------------------
+
+def test_paired_gate_clears_when_candidate_is_reliably_better_and_effect_is_large():
+    y = np.array([0, 1] * 40)
+    candidate_oof = np.array([0.05, 0.95] * 40)  # confidently correct
+    reference_oof = np.array([0.5, 0.5] * 40)  # uninformative
+
+    result = evaluate.paired_gate("candidate beats reference", candidate_oof, reference_oof, y,
+                                   min_effect=0.003, seed=42, verbose=False)
+
+    assert result["clears"] is True
+    assert result["ci_high"] < 0
+    assert result["delta"] < -0.003
+
+
+def test_paired_gate_does_not_clear_when_predictions_are_identical():
+    rng = np.random.RandomState(4)
+    y = rng.binomial(1, 0.5, size=50)
+    oof = rng.uniform(0.1, 0.9, size=50)
+
+    result = evaluate.paired_gate("identical arms", oof, oof, y, seed=42, verbose=False)
+
+    assert result["clears"] is False
+    assert result["delta"] == pytest.approx(0.0)
+
+
+def test_paired_gate_does_not_clear_when_effect_is_below_min_effect_threshold():
+    """A real but tiny difference (below min_effect) must not clear -- this
+    project's own bar for whether a CV win is large enough to plausibly
+    survive CV-to-leaderboard transfer (notebooks/23, 2026-09-11)."""
+    y = np.array([0, 1] * 200)
+    candidate_oof = np.array([0.099, 0.901] * 200)
+    reference_oof = np.array([0.1, 0.9] * 200)
+
+    result = evaluate.paired_gate("tiny real difference", candidate_oof, reference_oof, y,
+                                   min_effect=0.003, seed=42, verbose=False)
+
+    assert abs(result["delta"]) < 0.003
+    assert result["clears"] is False
+
+
+def test_paired_gate_returns_expected_keys():
+    y = np.array([0, 1, 0, 1])
+    oof = np.array([0.2, 0.8, 0.3, 0.7])
+
+    result = evaluate.paired_gate("smoke test", oof, oof, y, seed=42, verbose=False)
+
+    assert set(result.keys()) == {"label", "score_candidate", "score_reference",
+                                   "delta", "ci_low", "ci_high", "clears"}
+    assert result["label"] == "smoke test"
+
+
+# --- paired_repeat_gate --------------------------------------------------
+
+def test_paired_repeat_gate_passes_when_every_repeat_favors_the_candidate():
+    deltas = [-0.02, -0.018, -0.021, -0.019, -0.022]  # candidate always better
+
+    result = evaluate.paired_repeat_gate(deltas)
+
+    assert result["passed"] is True
+    assert result["ci_high"] < 0
+    assert result["mean"] == pytest.approx(np.mean(deltas))
+
+
+def test_paired_repeat_gate_fails_when_deltas_straddle_zero():
+    deltas = [-0.02, 0.01, -0.015, 0.02, -0.01]  # noisy, mean near zero
+
+    result = evaluate.paired_repeat_gate(deltas)
+
+    assert result["passed"] is False
+    assert result["ci_low"] < 0 < result["ci_high"]
+
+
+def test_paired_repeat_gate_uses_standard_error_not_raw_sd():
+    # same per-repeat sd, but 25 repeats instead of 5 -- SEM shrinks by 5x,
+    # so a small consistent mean improvement should now clear the gate.
+    rng = np.random.RandomState(0)
+    deltas_5 = rng.normal(loc=-0.006, scale=0.011, size=5)
+    deltas_25 = rng.normal(loc=-0.006, scale=0.011, size=25)
+
+    result_5 = evaluate.paired_repeat_gate(deltas_5)
+    result_25 = evaluate.paired_repeat_gate(deltas_25)
+
+    assert result_25["ci_high"] - result_25["ci_low"] < result_5["ci_high"] - result_5["ci_low"]
+
+
+def test_paired_repeat_gate_single_repeat_has_zero_width_ci():
+    result = evaluate.paired_repeat_gate([-0.01])
+
+    assert result["sd"] == 0.0
+    assert result["ci_low"] == result["ci_high"] == pytest.approx(-0.01)
+
+
+def test_paired_repeat_gate_mean_matches_hand_computed_value():
+    deltas = [0.01, -0.03, 0.02]
+
+    result = evaluate.paired_repeat_gate(deltas)
+
+    assert result["mean"] == pytest.approx(0.0)
