@@ -97,6 +97,14 @@ CROP_CENTER_MM = (1.5, 22.8, -15.5)
 # CROP_SIZE_MM / TARGET_SPACING, rounded up to an even number per axis.
 TARGET_SHAPE = (56, 30, 44)
 
+# Fallback for data.load_volume(uid, center_mm="auto") when a volume's own
+# striatum_center_mm is unmeasurable (degenerate mask, 0/1362 in training).
+# The corrected population median (notebooks/25's op03offsets, all 1362
+# volumes, RAS-resampled frame) -- a strictly better fallback than
+# CROP_CENTER_MM above, which was a smaller stratified sample's median and
+# is what "auto" mode replaces for every subject where the mask succeeds.
+CROP_CENTER_FALLBACK_MM = (2.3, 22.4, -38.1)
+
 # --- Intensity normalization (EDA section 5) ----------------------------------
 # Per-volume, never a single global constant: max spans 8 -> 54157 and p99
 # spans 2 -> 18326 across volumes, several orders of magnitude.

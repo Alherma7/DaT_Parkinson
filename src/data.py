@@ -3,10 +3,14 @@
 inference time -- never reimplemented in the inference path
 (`deep-learning-imaging.md`'s "Common mistakes").
 
-Unlike `features.py` (the classical baseline's adaptive per-volume
-striatum mask), this pipeline resamples to a fixed physical spacing and
-crops/pads to a fixed physical box every time -- the standard pattern for
-feeding a CNN a consistent input geometry.
+Always resamples to a fixed physical spacing and crops/pads to a fixed
+physical box shape -- the standard pattern for feeding a CNN a consistent
+input geometry. The crop CENTER can be fixed (`config.CROP_CENTER_MM`,
+every subject the same point -- the original design) or adaptive
+(`load_volume(uid, center_mm="auto")`, each subject's own measured
+striatum centroid via `features.striatum_center_mm` -- see project memory's
+striatum-crop-coverage investigation for why the fixed-center design left
+~29% of subjects' striatum partly outside the crop).
 """
 
 import warnings
@@ -18,6 +22,7 @@ from scipy import ndimage
 from skimage.restoration import denoise_nl_means
 
 import config
+import features
 
 
 def resample_to_spacing(volume, affine, target_spacing, order=1):
@@ -146,19 +151,30 @@ def load_volume(uid, center_mm=None):
     gates the denoising step; flipping it is the only change needed to
     promote or revert the experiment, no separate code path to drift.
 
-    `center_mm` (default `None` -> `config.CROP_CENTER_MM`): crop-center
-    override, mm offset on RAS axes (same convention as
-    `config.CROP_CENTER_MM`). Lets a caller crop around a per-subject or
-    alternative fixed offset instead of the production constant, e.g. the
-    striatum-crop-coverage experiments in notebooks/25-26 -- without a
-    second copy of this function to keep in sync with the real inference
-    path.
+    `center_mm`: crop-center override, mm offset on RAS axes (same
+    convention as `config.CROP_CENTER_MM`) -- lets a caller crop around a
+    per-subject or alternative offset instead of a single fixed constant,
+    without a second copy of this function to keep in sync with the real
+    inference path. Three forms: `None` (default) -> `config.CROP_CENTER_MM`,
+    the same point for every subject; `"auto"` -> this volume's OWN
+    measured striatum centroid (`features.striatum_center_mm`, computed on
+    the resampled volume), falling back to `config.CROP_CENTER_FALLBACK_MM`
+    when the mask is degenerate (0/1362 in training, but inference must not
+    crash on it) -- the per-subject-centered production mode; or an
+    explicit `(x, y, z)` tuple, e.g. the striatum-crop-coverage
+    experiments in notebooks/25-26.
     """
-    if center_mm is None:
-        center_mm = config.CROP_CENTER_MM
     path = config.NIFTI_DIR / f"{uid}.nii.gz"
     img = nib.load(str(path))
     resampled, _ = resample_to_spacing(img.get_fdata(), img.affine, config.TARGET_SPACING)
+
+    if center_mm is None:
+        center_mm = config.CROP_CENTER_MM
+    elif center_mm == "auto":
+        center_mm = features.striatum_center_mm(resampled, config.TARGET_SPACING)
+        if center_mm is None:
+            center_mm = config.CROP_CENTER_FALLBACK_MM
+
     cropped = crop_or_pad(resampled, config.TARGET_SPACING, center_mm,
                            config.TARGET_SHAPE)
     if config.USE_NLM_DENOISING:

@@ -245,11 +245,11 @@ def test_variant_checkpoint_filenames_matches_pattern_for_a_non_rung3_prefix():
     assert names[-1] == "rung4_augment_seed46_fold4.pt"
 
 
-def test_production_checkpoint_filenames_returns_150_names_across_6_variants():
+def test_production_checkpoint_filenames_returns_25_names_across_1_variant():
     names = model_module.production_checkpoint_filenames()
 
-    assert len(names) == 150
-    assert len(set(names)) == 150  # no duplicates
-    assert len(model_module.PRODUCTION_VARIANT_PREFIXES) == 6
+    assert len(names) == 25
+    assert len(set(names)) == 25  # no duplicates
+    assert len(model_module.PRODUCTION_VARIANT_PREFIXES) == 1
     for name in names:
         assert any(name.startswith(prefix + "_seed") for prefix in model_module.PRODUCTION_VARIANT_PREFIXES)

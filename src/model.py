@@ -165,13 +165,15 @@ def build_slab_model():
     return DatSlab2DCNN()
 
 
-PRODUCTION_VARIANT_PREFIXES = [
-    "rung3", "rung4_familybias", "rung4_lrsched", "rung4_augment",
-    "rung4_classweight", "rung4_fixedepoch",
-]  # notebooks/16_multivariant_ensemble.ipynb + 18_fixed_epoch_full_data.ipynb
-   # composition, confirmed (denoise excluded) in
-   # notebooks/22_calibration_refit_rowwise_cv.ipynb (2026-09-10) --
-   # see docs/superpowers/specs/2026-09-10-calibrated-ensemble-blend-design.md
+PRODUCTION_VARIANT_PREFIXES = ["coveragefix_persubject"]
+# Replaces the old 6-variant/150-checkpoint fixed-crop-center composition
+# (rung3 + 5 rung-4 variants) entirely -- notebooks/26_striatum_coverage_retrain.ipynb
+# (2026-09-13) found a single variant trained on data.load_volume(uid,
+# center_mm="auto") (per-subject striatum centering, 100% coverage vs.
+# the old fixed crop's ~71%) beats the whole old ensemble decisively
+# (paired_repeat_gate mean=-0.1025, CI=[-0.1449,-0.0601] vs. rung3 alone;
+# re-adding the old variants to the blend HURTS it, 6th Opus review) --
+# see project memory's striatum-crop-coverage investigation.
 
 PRODUCTION_VARIANT_BUILD_FNS = {prefix: build_model for prefix in PRODUCTION_VARIANT_PREFIXES}
 PRODUCTION_VARIANT_BUILD_FNS["slab2d"] = build_slab_model
@@ -202,8 +204,9 @@ def rung3_checkpoint_filenames(seeds=range(config.SEED, config.SEED + 5), n_fold
 
 
 def production_checkpoint_filenames():
-    """All 150 checkpoints (6 variants x 5 seeds x 5 folds) the shipped
-    ensemble averages -- the composition notebooks 16/18/22 adopted.
+    """All 25 checkpoints (1 variant x 5 seeds x 5 folds) the shipped
+    ensemble averages -- notebooks/26_striatum_coverage_retrain.ipynb's
+    per-subject-centered CNN, per PRODUCTION_VARIANT_PREFIXES above.
     scripts/build_submission_assets.py and submission_src/main.py both
     use this instead of re-deriving the variant list.
     """

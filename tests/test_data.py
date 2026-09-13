@@ -158,6 +158,52 @@ def test_load_volume_center_mm_override_changes_the_crop(tmp_path, monkeypatch):
     assert not np.allclose(default_out, overridden_out)
 
 
+def test_load_volume_auto_center_uses_this_volumes_own_striatum_centroid(tmp_path, monkeypatch):
+    """center_mm="auto" (the per-subject-centering production mode, see
+    project memory's striatum-crop-coverage investigation) must crop around
+    THIS volume's own measured centroid, not the fixed config constant."""
+    import nibabel as nib
+
+    volume = np.zeros((60, 60, 40), dtype=np.float32)
+    volume[25:35, 25:35, 15:25] = 500.0
+    affine = np.eye(4) * 2.46
+    affine[3, 3] = 1.0
+    nib.save(nib.Nifti1Image(volume, affine), tmp_path / "synthetic_uid.nii.gz")
+    monkeypatch.setattr(data.config, "NIFTI_DIR", tmp_path)
+
+    fake_center = (14.0, 0.0, 0.0)
+    calls = []
+
+    def fake_striatum_center_mm(resampled_volume, spacing):
+        calls.append((resampled_volume.shape, tuple(spacing)))
+        return fake_center
+
+    monkeypatch.setattr(data.features, "striatum_center_mm", fake_striatum_center_mm)
+
+    auto_out = data.load_volume("synthetic_uid", center_mm="auto")
+    explicit_out = data.load_volume("synthetic_uid", center_mm=fake_center)
+
+    assert len(calls) == 1  # called exactly once, on the resampled volume
+    np.testing.assert_array_equal(auto_out, explicit_out)
+
+
+def test_load_volume_auto_center_falls_back_when_mask_is_degenerate(tmp_path, monkeypatch):
+    import nibabel as nib
+
+    volume = np.zeros((60, 60, 40), dtype=np.float32)  # no signal -- degenerate mask
+    affine = np.eye(4) * 2.46
+    affine[3, 3] = 1.0
+    nib.save(nib.Nifti1Image(volume, affine), tmp_path / "degenerate_uid.nii.gz")
+    monkeypatch.setattr(data.config, "NIFTI_DIR", tmp_path)
+    monkeypatch.setattr(data.features, "striatum_center_mm", lambda *a, **k: None)
+
+    with pytest.warns(UserWarning, match="degenerate/near-empty volume"):
+        auto_out = data.load_volume("degenerate_uid", center_mm="auto")
+    fallback_out = data.load_volume("degenerate_uid", center_mm=data.config.CROP_CENTER_FALLBACK_MM)
+
+    np.testing.assert_array_equal(auto_out, fallback_out)
+
+
 def test_load_volume_warns_on_degenerate_all_zero_volume(tmp_path, monkeypatch):
     import nibabel as nib
 

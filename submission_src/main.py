@@ -1,10 +1,17 @@
 """Submission entrypoint (docs/superpowers/specs/2026-09-09-submission-packaging-design.md).
 
-Runs the 150-checkpoint CNN ensemble (6 production variants x 5 seeds x
-5 folds, pooled in logit space) and the pre-fit ComBat classical
-baseline, blends them via a fitted logistic-regression calibration
-(BLEND_A/B/C, with a CNN-only FALLBACK_A1/C1 for degenerate-mask rows),
-and writes submission.csv.
+Runs the 25-checkpoint per-subject-centered CNN (1 production variant x 5
+seeds x 5 folds, pooled in logit space -- notebooks/26_striatum_coverage_retrain.ipynb,
+2026-09-13) and the pre-fit ComBat classical baseline, blends them via a
+fitted logistic-regression calibration (BLEND_A/B/C, with a CNN-only
+FALLBACK_A1/C1 for degenerate-mask rows), and writes submission.csv.
+
+Replaces the earlier 150-checkpoint/6-variant fixed-crop-center ensemble
+entirely: a single variant trained with `data.load_volume(uid,
+center_mm="auto")` (each subject's own measured striatum centroid, not one
+population-median point for everyone) beat the whole old ensemble
+decisively -- re-adding the old variants to the blend HURTS it (6th Opus
+review, project memory's striatum-crop-coverage investigation).
 
 Never logs per-row information (uid next to a prediction, per-row
 feature values) -- only aggregate counts and phase timings, per this
@@ -34,14 +41,18 @@ NIFTI_DIR = DATA_DIR / "niftis"
 SUBMISSION_FORMAT_PATH = DATA_DIR / "submission_format.csv"
 WRITE_SUBMISSION_PATH = Path("submission.csv")
 MODEL_ASSETS = Path(__file__).parent / "model_assets"
-# notebooks/22_calibration_refit_rowwise_cv.ipynb (2026-09-10), 6-variant
-# composition, logit-space pooling + LogisticRegression(fit_intercept=True)
-# blend -- docs/superpowers/specs/2026-09-10-calibrated-ensemble-blend-design.md
-BLEND_A = 0.8558      # CNN logit coefficient
-BLEND_B = 0.5296      # baseline logit coefficient
-BLEND_C = -0.0905     # intercept
-FALLBACK_A1 = 0.9784  # CNN-only fallback (degenerate baseline mask)
-FALLBACK_C1 = 0.0508  # CNN-only fallback intercept
+# notebooks/27_coverage_blend_refit.ipynb (2026-09-13), refit for the new
+# single-variant per-subject-centered composition, same method as
+# notebooks/22 (logit-space pooling + LogisticRegression(fit_intercept=True)
+# blend) -- docs/superpowers/specs/2026-09-10-calibrated-ensemble-blend-design.md
+# *** PROVISIONAL: cross-check values from the 6th Opus review's own
+# reconstruction, NOT yet the notebook's official full_fit() output --
+# replace with notebook 27's real (a, b, c, a1, c1) before packaging. ***
+BLEND_A = 0.8694      # CNN logit coefficient
+BLEND_B = 0.2765      # baseline logit coefficient
+BLEND_C = -0.1447     # intercept
+FALLBACK_A1 = 0.9467  # CNN-only fallback (degenerate baseline mask)
+FALLBACK_C1 = -0.1014  # CNN-only fallback intercept
 PROB_CLIP = (0.005, 0.995)  # widened from (1e-6, 1-1e-6) -- tail-risk hedge,
                              # second Opus review finding 7g: one confidently-
                              # wrong row at 1e-6 costs ~0.023 log loss
@@ -53,18 +64,21 @@ DEVICE = config.DEVICE if torch.cuda.is_available() else "cpu"
 
 
 def run_cnn_ensemble(uids):
-    """Average sigmoid probability across all 150 production checkpoints
-    (6 variants x 5 seeds x 5 folds -- notebooks 16/18/22's adopted
-    composition), pooled in LOGIT space (submission.pool_logit_mean),
-    not probability space -- notebooks/22_calibration_refit_rowwise_cv.ipynb's
-    winning pre-registered comparison.
+    """Average sigmoid probability across all 25 production checkpoints
+    (1 per-subject-centered variant x 5 seeds x 5 folds --
+    notebooks/26_striatum_coverage_retrain.ipynb's adopted composition),
+    pooled in LOGIT space (submission.pool_logit_mean), not probability
+    space -- notebooks/22_calibration_refit_rowwise_cv.ipynb's winning
+    pre-registered comparison, unchanged by the composition swap.
 
     Each test volume's preprocessing (resample/crop/normalize --
-    data.load_volume, the expensive part) runs at most ONCE per uid and
-    is cached in memory (a plain dict, not the disk-backed
-    cache.CachedVolumeStore -- inference is a single session, nothing to
-    persist across runs) so all 150 checkpoints' passes reuse it instead
-    of repeating it 150x per volume. Returns {uid: probability}.
+    data.load_volume(uid, center_mm="auto"): each volume is cropped around
+    its OWN measured striatum centroid, not a fixed population-median
+    point -- the expensive part) runs at most ONCE per uid and is cached
+    in memory (a plain dict, not the disk-backed cache.CachedVolumeStore
+    -- inference is a single session, nothing to persist across runs) so
+    all 25 checkpoints' passes reuse it instead of repeating it 25x per
+    volume. Returns {uid: probability}.
     """
     checkpoint_dir = MODEL_ASSETS / "checkpoints"
     expected = model.production_checkpoint_filenames()
@@ -81,7 +95,7 @@ def run_cnn_ensemble(uids):
 
     def cached_load_volume(uid):
         if uid not in volume_cache:
-            volume_cache[uid] = data.load_volume(uid)
+            volume_cache[uid] = data.load_volume(uid, center_mm="auto")
         return volume_cache[uid]
 
     ds = dataset.DatParkinsonDataset(uids, load_fn=cached_load_volume)
@@ -145,7 +159,7 @@ def main():
         "did not fire as expected."
     )
     assert not config.USE_NLM_DENOISING, (
-        "config.USE_NLM_DENOISING is True, but the 150 production checkpoints "
+        "config.USE_NLM_DENOISING is True, but the 25 production checkpoints "
         "were trained on non-denoised volumes -- rung4_denoise is excluded."
     )
 

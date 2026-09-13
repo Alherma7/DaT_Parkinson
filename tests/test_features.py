@@ -60,6 +60,65 @@ def test_striatum_mask_returns_none_for_empty_volume():
     assert mask is None
 
 
+# --- striatum_center_mm ------------------------------------------------------
+
+def test_striatum_center_mm_symmetric_blobs_land_at_geometric_center():
+    volume = _blank_volume()
+    spacing = (2.0, 2.0, 2.0)
+    volume[5:8, 13:17, 8:12] = 1000.0
+    volume[22:25, 13:17, 8:12] = 1000.0
+    voxel_ml = np.prod(spacing) / 1000.0
+    target_ml = 96 * voxel_ml
+
+    center_mm = features.striatum_center_mm(volume, spacing, target_ml=target_ml)
+
+    assert center_mm is not None
+    np.testing.assert_allclose(center_mm, (0.0, 0.0, 0.0), atol=1e-8)
+
+
+def test_striatum_center_mm_matches_manual_centroid_for_an_offset_blob():
+    volume = _blank_volume()
+    spacing = (2.0, 2.0, 2.0)
+    volume[20:24, 13:17, 8:12] = 1000.0  # centroid at voxel (21.5, 14.5, 9.5)
+
+    center_mm = features.striatum_center_mm(volume, spacing, target_ml=0.5)
+
+    # geometric center is voxel (14.5, 14.5, 9.5) -- offset is (7, 0, 0) voxels
+    assert center_mm is not None
+    np.testing.assert_allclose(center_mm, (14.0, 0.0, 0.0), atol=1e-8)
+
+
+def test_striatum_center_mm_returns_none_for_empty_volume():
+    volume = _blank_volume()
+    spacing = (2.0, 2.0, 2.0)
+
+    center_mm = features.striatum_center_mm(volume, spacing, target_ml=0.5)
+
+    assert center_mm is None
+
+
+def test_striatum_center_mm_is_the_inverse_of_crop_or_pad_center_mm():
+    """The property notebooks/25's per-subject-centering experiment (and
+    data.load_volume's "auto" mode) depends on: feeding striatum_center_mm's
+    output back into crop_or_pad's center_mm recenters the crop on the same
+    striatum, since the two use algebraically inverse conventions (6th Opus
+    review, project memory)."""
+    import data
+
+    volume = _blank_volume()
+    spacing = (2.0, 2.0, 2.0)
+    volume[20:24, 13:17, 8:12] = 1000.0
+
+    center_mm = features.striatum_center_mm(volume, spacing, target_ml=0.5)
+    cropped = data.crop_or_pad(volume, spacing, center_mm, target_shape=(10, 10, 10))
+
+    assert cropped.sum() == pytest.approx(volume.sum())  # nothing clipped
+    idx = np.argwhere(cropped > 0)
+    crop_center = (np.asarray(cropped.shape) - 1) / 2.0
+    centroid = idx.mean(axis=0)
+    assert np.max(np.abs(centroid - crop_center)) <= 1.0  # within 1 voxel (rounding)
+
+
 # --- signed_asymmetry --------------------------------------------------------
 
 def test_signed_asymmetry_positive_when_left_brighter():

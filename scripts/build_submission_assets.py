@@ -1,9 +1,10 @@
 """[RUN ME] -- not run by Claude. Reads real per-row training data
 (data/processed/baseline_features.csv's labels) to fit the classical
 baseline on 100% of the training set, then assembles submission_src/:
-the fitted pipeline, the 150 production CNN checkpoints (6 variants x 5
-seeds x 5 folds), and the src/ modules main.py needs. Run this once
-before packaging submission.zip (see
+the fitted pipeline, the production CNN checkpoints
+(model.production_checkpoint_filenames() -- currently 25: 1 per-subject-
+centered variant x 5 seeds x 5 folds), and the src/ modules main.py
+needs. Run this once before packaging submission.zip (see
 docs/superpowers/specs/2026-09-09-submission-packaging-design.md), and
 again any time config.py/data.py/model.py/features.py/dataset.py/
 submission.py change.
@@ -61,7 +62,8 @@ def copy_checkpoints():
             )
         shutil.copy2(src_path, dest / name)
         copied += 1
-    print(f"copied {copied}/{len(names)} production checkpoints (6 variants) -> {dest}")
+    print(f"copied {copied}/{len(names)} production checkpoints "
+          f"({len(model.PRODUCTION_VARIANT_PREFIXES)} variant(s)) -> {dest}")
 
 
 def copy_modules():

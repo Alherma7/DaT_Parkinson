@@ -55,6 +55,28 @@ def striatum_mask(volume, spacing, target_ml=20.0, central_margin=0.15):
     return np.isin(labeled, keep)
 
 
+def striatum_center_mm(volume, spacing, target_ml=20.0):
+    """Striatum centroid, mm offset from the volume's geometric center on
+    RAS axes -- same convention as `config.CROP_CENTER_MM` and the
+    inverse of `data.crop_or_pad`'s own convention (`center_vox =
+    (shape-1)/2 + center_mm/spacing`), so feeding this back into
+    `crop_or_pad` as `center_mm` recenters the crop on the same striatum
+    (verified in `tests/test_features.py`, and by the striatum-crop-
+    coverage investigation's 6th Opus review -- project memory).
+
+    Returns None if `striatum_mask` is degenerate -- a caller (e.g.
+    `data.load_volume`'s per-subject "auto" centering mode) must supply a
+    fallback constant, never crop around an unmeasured (0, 0, 0).
+    """
+    mask = striatum_mask(volume, spacing, target_ml=target_ml)
+    if mask is None:
+        return None
+    idx = np.argwhere(mask)
+    center_vox = (np.asarray(volume.shape, dtype=float) - 1) / 2.0
+    centroid_vox = idx.mean(axis=0)
+    return tuple((centroid_vox - center_vox) * np.asarray(spacing, dtype=float))
+
+
 def signed_asymmetry(volume, mask, spacing):
     """Signed left-right asymmetry `(left - right) / (left + right)` of
     the masked signal, split at the intensity-weighted midline along
