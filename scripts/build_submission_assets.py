@@ -49,7 +49,16 @@ def fit_and_pickle_baseline():
 
 
 def copy_checkpoints():
+    """Bug fixed 2026-09-13: this used to only ever ADD files, never remove
+    ones no longer in model.production_checkpoint_filenames() -- when the
+    composition shrank from 150 checkpoints/6 variants to 25/1, the old 150
+    stayed behind in model_assets/checkpoints/ and got zipped into
+    submission.zip too (harmless at inference, since main.py only loads the
+    expected 25, but needless bloat). Wipe the destination first so it
+    always matches the current composition exactly."""
     dest = MODEL_ASSETS / "checkpoints"
+    if dest.exists():
+        shutil.rmtree(dest)
     dest.mkdir(parents=True, exist_ok=True)
     names = model.production_checkpoint_filenames()
     copied = 0
