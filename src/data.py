@@ -173,6 +173,7 @@ def load_volume(uid, center_mm=None):
     elif center_mm == "auto":
         center_mm = features.striatum_center_mm(resampled, config.TARGET_SPACING)
         if center_mm is None:
+            warnings.warn("striatum_center_mm degenerate -- used CROP_CENTER_FALLBACK_MM")
             center_mm = config.CROP_CENTER_FALLBACK_MM
 
     cropped = crop_or_pad(resampled, config.TARGET_SPACING, center_mm,

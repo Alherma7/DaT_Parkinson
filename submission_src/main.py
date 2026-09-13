@@ -20,6 +20,7 @@ AI-assistant data rule.
 """
 import sys
 import time
+import warnings
 from pathlib import Path
 
 import nibabel as nib
@@ -92,10 +93,15 @@ def run_cnn_ensemble(uids):
     print(f"CNN ensemble: {len(checkpoint_paths)} checkpoints, {len(uids)} test volumes, device={DEVICE}")
 
     volume_cache = {}
+    fallback_count = [0]
 
     def cached_load_volume(uid):
         if uid not in volume_cache:
-            volume_cache[uid] = data.load_volume(uid, center_mm="auto")
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                volume_cache[uid] = data.load_volume(uid, center_mm="auto")
+            if any("striatum_center_mm degenerate" in str(w.message) for w in caught):
+                fallback_count[0] += 1
         return volume_cache[uid]
 
     ds = dataset.DatParkinsonDataset(uids, load_fn=cached_load_volume)
@@ -111,6 +117,9 @@ def run_cnn_ensemble(uids):
         all_probs.append(np.concatenate(probs))
         if (i + 1) % 10 == 0 or i + 1 == len(checkpoint_paths):
             print(f"  checkpoint {i + 1}/{len(checkpoint_paths)} done in {time.time() - start:.1f}s")
+
+    print(f"CNN own-centroid centering: {len(uids) - fallback_count[0]}/{len(uids)} volumes used their own "
+          f"measured striatum centroid ({fallback_count[0]} degenerate -> CROP_CENTER_FALLBACK_MM)")
 
     pooled = submission.pool_logit_mean(all_probs)
     assert pooled.shape == (len(uids),), f"pooled {pooled.shape} != {len(uids)} uids"

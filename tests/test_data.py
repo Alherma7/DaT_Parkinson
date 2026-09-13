@@ -187,6 +187,26 @@ def test_load_volume_auto_center_uses_this_volumes_own_striatum_centroid(tmp_pat
     np.testing.assert_array_equal(auto_out, explicit_out)
 
 
+def test_load_volume_auto_center_warns_when_striatum_mask_is_degenerate(tmp_path, monkeypatch):
+    """Distinct from the final near-empty-crop warning (_warn_if_degenerate)
+    -- this one fires specifically when features.striatum_center_mm itself
+    returns None, so a caller (submission_src/main.py) can count how many
+    test volumes fell back to CROP_CENTER_FALLBACK_MM instead of their own
+    measured centroid, the same way it already counts the classical
+    baseline's degenerate-mask rate."""
+    import nibabel as nib
+
+    volume = np.zeros((60, 60, 40), dtype=np.float32)
+    affine = np.eye(4) * 2.46
+    affine[3, 3] = 1.0
+    nib.save(nib.Nifti1Image(volume, affine), tmp_path / "degenerate_uid.nii.gz")
+    monkeypatch.setattr(data.config, "NIFTI_DIR", tmp_path)
+    monkeypatch.setattr(data.features, "striatum_center_mm", lambda *a, **k: None)
+
+    with pytest.warns(UserWarning, match="striatum_center_mm degenerate"):
+        data.load_volume("degenerate_uid", center_mm="auto")
+
+
 def test_load_volume_auto_center_falls_back_when_mask_is_degenerate(tmp_path, monkeypatch):
     import nibabel as nib
 
