@@ -41,13 +41,13 @@ NIFTI_DIR = DATA_DIR / "niftis"
 SUBMISSION_FORMAT_PATH = DATA_DIR / "submission_format.csv"
 WRITE_SUBMISSION_PATH = Path("submission.csv")
 MODEL_ASSETS = Path(__file__).parent / "model_assets"
-# notebooks/27_coverage_blend_refit.ipynb (2026-09-13), refit for the new
-# single-variant per-subject-centered composition, same method as
-# notebooks/22 (logit-space pooling + LogisticRegression(fit_intercept=True)
-# blend) -- docs/superpowers/specs/2026-09-10-calibrated-ensemble-blend-design.md
-# *** PROVISIONAL: cross-check values from the 6th Opus review's own
-# reconstruction, NOT yet the notebook's official full_fit() output --
-# replace with notebook 27's real (a, b, c, a1, c1) before packaging. ***
+# notebooks/27_coverage_blend_refit.ipynb (2026-09-13, run by the user),
+# refit for the new single-variant per-subject-centered composition, same
+# method as notebooks/22 (logit-space pooling + LogisticRegression
+# (fit_intercept=True) blend). Gate vs. the shipped 6-variant recipe:
+# delta=-0.0541, 95% paired-bootstrap CI=[-0.0762,-0.0322] -- clears
+# decisively. (These exactly match the 6th Opus review's own cross-check
+# reconstruction, to 4 decimals -- both computed the identical fit.)
 BLEND_A = 0.8694      # CNN logit coefficient
 BLEND_B = 0.2765      # baseline logit coefficient
 BLEND_C = -0.1447     # intercept
