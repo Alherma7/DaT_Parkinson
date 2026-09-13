@@ -137,6 +137,27 @@ def test_load_volume_returns_target_shape_with_channel_dim(tmp_path, monkeypatch
     assert np.isfinite(out).all()
 
 
+def test_load_volume_center_mm_override_changes_the_crop(tmp_path, monkeypatch):
+    """The striatum-coverage experiments (notebooks/25-26) need to crop
+    around a per-subject or alternative offset instead of the fixed
+    config.CROP_CENTER_MM constant, without a second copy of load_volume."""
+    import nibabel as nib
+
+    volume = np.zeros((60, 60, 40), dtype=np.float32)
+    volume[25:35, 25:35, 15:25] = 500.0
+    affine = np.eye(4) * 2.46
+    affine[3, 3] = 1.0
+    nib.save(nib.Nifti1Image(volume, affine), tmp_path / "synthetic_uid.nii.gz")
+    monkeypatch.setattr(data.config, "NIFTI_DIR", tmp_path)
+
+    default_out = data.load_volume("synthetic_uid")
+    explicit_default_out = data.load_volume("synthetic_uid", center_mm=data.config.CROP_CENTER_MM)
+    overridden_out = data.load_volume("synthetic_uid", center_mm=(30.0, 30.0, 30.0))
+
+    np.testing.assert_array_equal(default_out, explicit_default_out)
+    assert not np.allclose(default_out, overridden_out)
+
+
 def test_load_volume_warns_on_degenerate_all_zero_volume(tmp_path, monkeypatch):
     import nibabel as nib
 

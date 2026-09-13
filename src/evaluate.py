@@ -73,9 +73,21 @@ def _collapse_rare_families(target, family, min_size):
     return collapsed
 
 
-def paired_bootstrap_ci(y_true, probs_a, probs_b, seed, n_bootstrap=1000):
+def paired_bootstrap_ci(y_true, probs_a, probs_b, seed, n_bootstrap=20000):
     """95% CI (percentile method) of log_loss(a) - log_loss(b) under paired
     bootstrap resampling of rows (Varoquaux 2018). Negative values favor a.
+
+    `n_bootstrap` default raised from 1000 to 20000 (2026-09-13, Opus
+    review of notebook 25's op07 near-miss): the Monte Carlo standard
+    error of a percentile estimated from B draws is
+    ~sqrt(.975*.025/B)/f(x_.975), which at B=1000 (~0.00024 for a
+    bootstrap sd around 0.003, this project's typical scale) can be
+    larger than the margin a gate is deciding on -- op07's CI upper bound
+    sat 0.0001 above zero, well inside that noise. Raising to 20000 costs
+    seconds (pure numpy, no model fitting) and shrinks that MC error by
+    ~4.5x. This does not retroactively change any past gate verdict
+    (those remain as documented, computed at n=1000); it only raises the
+    precision floor for gates run from here on.
 
     Returns (ci_low, ci_high).
     """

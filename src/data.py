@@ -137,7 +137,7 @@ def _warn_if_degenerate(normalized):
         warnings.warn("degenerate/near-empty volume after preprocessing")
 
 
-def load_volume(uid):
+def load_volume(uid, center_mm=None):
     """Load, resample, crop, (optionally denoise,) and normalize the
     volume for `uid`. Returns a `(1, *config.TARGET_SHAPE)` float32
     array -- the single function both training and inference call, never
@@ -145,11 +145,21 @@ def load_volume(uid):
     (default `False` -- rung-4 experiment 5, not yet gate-validated)
     gates the denoising step; flipping it is the only change needed to
     promote or revert the experiment, no separate code path to drift.
+
+    `center_mm` (default `None` -> `config.CROP_CENTER_MM`): crop-center
+    override, mm offset on RAS axes (same convention as
+    `config.CROP_CENTER_MM`). Lets a caller crop around a per-subject or
+    alternative fixed offset instead of the production constant, e.g. the
+    striatum-crop-coverage experiments in notebooks/25-26 -- without a
+    second copy of this function to keep in sync with the real inference
+    path.
     """
+    if center_mm is None:
+        center_mm = config.CROP_CENTER_MM
     path = config.NIFTI_DIR / f"{uid}.nii.gz"
     img = nib.load(str(path))
     resampled, _ = resample_to_spacing(img.get_fdata(), img.affine, config.TARGET_SPACING)
-    cropped = crop_or_pad(resampled, config.TARGET_SPACING, config.CROP_CENTER_MM,
+    cropped = crop_or_pad(resampled, config.TARGET_SPACING, center_mm,
                            config.TARGET_SHAPE)
     if config.USE_NLM_DENOISING:
         cropped = denoise_volume(cropped)
