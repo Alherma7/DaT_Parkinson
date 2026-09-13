@@ -530,6 +530,159 @@ and `code-execution-submission.md` extensions).
     the local Docker smoke test then the platform smoke test — all before
     spending one of the 2-3 remaining real submissions.
 
+- 2026-09-10 (later, same day): **6-variant calibrated ensemble
+  implemented and shipped.** Wired via `superpowers:subagent-driven-
+  development` (7 commits, `45452e6`..`8ca41c0`): `model.py`'s checkpoint-
+  filename generator, `scripts/build_submission_assets.py`, and
+  `submission_src/main.py` all extended from rung3-only to all 6 variant
+  prefixes; `submission.py::combine_predictions` rewritten for the
+  logit-space-pooled, `LogisticRegression`-blend signature. Whole-branch
+  Opus review found zero Critical issues (2 Important + 3 Minor fixed in
+  one wave). Local Docker smoke test: **exit 0**, output shape verified.
+  Two real environment bugs found and fixed getting there: the separate
+  `~/Desktop/competition-sfmn-parkinsons-runtime/` clone's `submission_src/`
+  is a physically separate copy (not a symlink) and must be manually
+  re-synced before every pack; Git Bash + `docker run --mount` mangles
+  the container-side path unless `MSYS2_ARG_CONV_EXCL="*"` is set
+  directly on the `docker run` invocation. **Platform smoke test: log
+  loss=0.2271** (n=20, not a ranking signal, only confirms the pipeline
+  runs). Submission budget resolved by the user: only **1** real
+  submission remained for the rest of the competition, not the 2-3
+  assumed earlier — raised the bar on review rigor for everything after
+  this point.
+
+- 2026-09-11: **Second real submission: log loss 0.4185, AUROC 0.8891**
+  (vs. the first, 0.4648/0.8796 — a real **-0.0463** improvement,
+  confirming the whole notebooks-14-through-22 line of work transferred
+  to the real leaderboard, not just CV). A 3rd Opus deep review ("are we
+  stuck?", after a literature/forum research pass) decomposed the result:
+  submission 2 sits within **+0.0020** log loss of the theoretical
+  optimum for its own discrimination ability (AUROC 0.8891) — calibration
+  is exhausted, any further gain needs more discrimination. All 3
+  literature-sourced candidates tried that day (bilinear/second-order
+  fusion, ridge-weighted variant reweighting, asymmetric-loss ensemble
+  disagreement) came back null in `notebooks/23_paired_gate_shipped_
+  recipe_candidates.ipynb`, exactly as pre-registered — also caught and
+  fixed a real gate-statistic bug (comparing a paired delta against the
+  *unpaired* across-fold sd, blind to any effect below ~0.011 SEM;
+  `evaluate.paired_gate`/`paired_bootstrap_ci` promoted from the notebook
+  to `src/evaluate.py` as the fix). Only remaining lever identified with
+  an actual discrimination mechanism: roadmap item 6 (bounded
+  architecture check, never run).
+
+- 2026-09-11 (later): **Roadmap item 6 built and run — a 2D thick-slab
+  CNN (Wenzel et al. 2019) as a 7th ensemble member.** Real geometry bug
+  found via systematic debugging before the full run (`crop_or_pad`'s
+  nearest-voxel rounding, negligible for the 3D track's 108mm-thick crop,
+  catastrophic for a 1-voxel/12mm-thick slab — fixed by resampling finer
+  and averaging 6 voxels for the same physical thickness). After the fix,
+  `notebooks/24_slab2d_architecture_diversity.ipynb`'s gate came back
+  **clean and negative** (delta=+0.0013, 95% CI=[+0.0001,+0.0025] —
+  reliably worse). A second Opus review, requested before accepting
+  "close the project," overturned that conclusion: the real cause wasn't
+  slab2d's architecture but `config.CROP_CENTER_MM` itself — a
+  population-**median** offset from a small (n=119) stratified sample,
+  with a genuinely large underlying spread (z sd≈32.5mm on that sample) —
+  so a 12mm-thick slab fixed at one point missed the striatum for most
+  subjects; the diluted blend-weight gate (slab2d got a fixed 1/7 weight)
+  also underpowered the test. A fairer gate (`op07fairgate`, slab2d as
+  its own learnable blend feature) came back genuinely **null**, not
+  negative. **This is the moment the striatum-crop-coverage investigation
+  started** — see below.
+
+- 2026-09-11 (final): **`notebooks/25_striatum_centroid_ras_frame_audit.ipynb`
+  built — production crop-coverage gap measured for the first time.**
+  Over all 1362 training volumes (RAS-resampled frame, matching what
+  `crop_or_pad` actually uses): striatum centroid offset sd on the z-axis
+  is **41.9mm** (larger than the earlier 32.5mm estimate — refutes the
+  "frame-mismatch inflated it" hypothesis). The shipped 0.4185 recipe's
+  fixed 3D crop contains the striatum centroid for only **70.2%** of
+  subjects. A 4th Opus review sized the likely CNN-alone effect at
+  -0.015 to -0.035 log loss and proposed a cheap, staged diagnostic plan
+  (contamination check → causal control via existing OOF arrays → gate
+  the coverage flag as a blend covariate → conditionally retrain) before
+  touching any production code.
+
+- 2026-09-12: **Steps 1-2 of that plan run — causal mechanism confirmed,
+  effect far larger than estimated.** Bbox z-extent contamination check
+  came back clean (rules out a thyroid/salivary-uptake mask-contamination
+  risk). The causal control (splitting the shipped OOF into covered/
+  uncovered subgroups by the centroid-inside-crop flag) found: CNN
+  covered-vs-uncovered log-loss delta **+0.2317**, 95% CI=
+  [+0.1701,+0.2927]; the crop-immune classical baseline's delta was flat
+  (+0.0020, CI crosses 0) — isolates the fixed crop itself, not general
+  subject difficulty, as the cause, and at roughly **2-4.6x** the 4th
+  review's own upper-bound estimate.
+
+- 2026-09-13: **Step 3 (gate the coverage flag as a blend covariate):
+  near-miss, not a clean pass** — delta=-0.0053, 95% CI=[-0.0110,+0.0001],
+  just barely fails to clear (whole CI < 0) this project's own
+  pre-registered rule. A 5th Opus review found the verdict was
+  imprecise, not wrong (`n_bootstrap=1000`'s own Monte Carlo error was
+  comparable to the margin in question — raised the default to 20000 in
+  `evaluate.paired_bootstrap_ci`) and reframed the plan: per-subject
+  centering is not more expensive than a "cheap" global re-center once
+  per-uid centroids already exist on disk, and has a much higher ceiling.
+  Free diagnostics (`notebooks/25` op08-op11) confirmed the window-bug
+  fix was immaterial, found the causal story survives a family confound
+  check (smaller than pooled but still clean within-family), and
+  produced the clearest evidence yet: **AUROC collapses from 0.9293
+  (covered) to 0.7088 (uncovered)** while the baseline barely moves — a
+  CNN-specific discrimination failure, not recalibratable.
+
+- 2026-09-13 (later): **`notebooks/26_striatum_coverage_retrain.ipynb` —
+  the largest single result this project has produced.** Trained a
+  rung3-equivalent CNN under two crop-center arms: a recentered-constant
+  (79% coverage) and a **per-subject-centered** one (`data.load_volume
+  (uid, center_mm="auto")`, each subject cropped around their own
+  measured centroid — 100% coverage by construction). Gated via
+  `evaluate.paired_repeat_gate` against the current CNN: recentered-
+  constant mean=-0.0251 (CI crosses 0, underpowered on log loss, though
+  AUROC ranks it a clean win); **per-subject mean=-0.1025, 95%
+  CI=[-0.1449,-0.0601] — passes decisively**, pooled log loss 0.3495 vs.
+  0.4520. A 6th Opus review, requested given the size of the result and
+  the stakes (last submission, ~3 days left), independently re-derived
+  every number bit-for-bit, found no bug or leakage, and recommended
+  shipping the new 25-checkpoint variant **alone** — re-adding the old 6
+  variants was measured to actively hurt the blend (0.3375 vs. 0.3076).
+
+- 2026-09-13 (final): **Production rewrite + final submission.** TDD
+  throughout: `features.striatum_center_mm` (per-volume centroid, the
+  algebraic inverse of `crop_or_pad`'s own convention — locked in with a
+  round-trip test), `config.CROP_CENTER_FALLBACK_MM` (degenerate-mask
+  fallback, 0/1362 in training), `data.load_volume(uid, center_mm="auto")`,
+  `model.PRODUCTION_VARIANT_PREFIXES = ["coveragefix_persubject"]`
+  (replacing the old 6-variant list entirely). `notebooks/27_coverage_
+  blend_refit.ipynb` refit the calibrated blend on the new composition
+  (gate vs. shipped: delta=-0.0541, CI=[-0.0762,-0.0322]) and ran the
+  de-risking check the 6th review asked for — recomputing
+  `striatum_center_mm` via the real production code path for 100 sampled
+  training uids, an **exact bit-for-bit match** against `notebooks/25`'s
+  measurements. Two real packaging bugs caught and fixed while shipping:
+  `build_submission_assets.py::copy_checkpoints()` never removed stale
+  checkpoints (the old 150 stayed in `model_assets/` and got zipped in
+  alongside the new 25) — fixed to wipe the destination first; and the
+  separate runtime-repo clone's `entrypoint.sh` had CRLF line endings
+  (a Windows git-checkout artifact) breaking bash parsing inside the
+  Linux container — fixed with `sed -i 's/\r$//'`. Also added explicit
+  logging of the CNN's own auto-centering fallback rate (previously only
+  the classical baseline logged its degenerate-mask count), so a smoke
+  test log directly shows "N/20 used their own measured centroid."
+  **Local Docker smoke test: exit 0, 20/20 valid on both sides, 0
+  fallbacks.** Platform smoke test (0.2420) read correctly as noise
+  (n=20, SE≈±0.1) against the old recipe's own smoke score (0.2271), not
+  a regression — both smoke scores beat their own honest CV estimates, a
+  known pattern in this project.
+  **FINAL REAL SUBMISSION (the last one): log loss=0.2975, AUROC=0.9433**
+  — a **-0.1210** improvement over submission 2 (0.4185/0.8891), the
+  single largest gain of the whole project, and for the first time the
+  real score landed *better* than the honest row-wise-CV estimate
+  (0.3076) rather than showing the usual CV-to-LB shortfall. **Project
+  closed** — the striatum-crop-coverage investigation (started
+  2026-09-11) is fully resolved: a real production defect (fixed-
+  population-median crop center) found, causally isolated, fixed, and
+  validated on the real leaderboard.
+
 - [x] Run `notebooks/01_eda_volumes.ipynb` and record the answers to its
       questions here — see Progress above (2026-09-08).
 - [x] Redo the striatum crop-size estimate with a p99 threshold +
@@ -691,4 +844,9 @@ and `code-execution-submission.md` extensions).
       (**0.4648, rank #254**) all passed/scored. A real
       disqualification-risk bug (test uid leaked into a log warning) was
       caught and fixed (commit 069bb28) before further submissions.
-      2 of 3 weekly regular submissions remain before 2026-09-16.
+- [x] **Second and third (final) real submissions** — see Progress above
+      (2026-09-11, 2026-09-13). Submission 2 (6-variant calibrated
+      ensemble): **0.4185/0.8891**. Submission 3, the last one (25-checkpoint
+      per-subject-centered CNN replacing the old ensemble entirely, after
+      the striatum-crop-coverage investigation): **0.2975/0.9433** — the
+      final result. All 3 real submissions used; project closed.
