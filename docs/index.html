@@ -176,6 +176,7 @@
     <a href="#didnt">What didn't</a>
     <a href="#finding">The key finding</a>
     <a href="#lessons">Lessons</a>
+    <a href="#comparison">Vs. the top finishers</a>
     <a href="#reproduce">Reproduce</a>
   </nav>
 
@@ -366,6 +367,35 @@
   time, on the last submission. The confirmed final result is 0.3436 — a real gap, not a
   reporting error, and consistent with the wider divergence between public and private
   standings reported across this competition's field.</p>
+
+  <h2 id="comparison">Vs. the top finishers</h2>
+  <p>Two other entrants published their solutions after the competition closed:
+  <a href="https://github.com/ahammadshawki8/dat-parkinsons-challenge">ahammadshawki8/dat-parkinsons-challenge</a>
+  (#10, log loss 0.2760) and <a href="https://github.com/paul-bd/DAT_challenge">paul-bd/DAT_challenge</a>
+  (#6, log loss 0.2732). Same problem framing as ours — localize the striatum, extract
+  signal, calibrate — but each pushed several pieces further than we did. This section is
+  kept here as a grounded reference for future projects, not just this one.</p>
+
+  <table>
+    <thead><tr><th>Dimension</th><th>This project</th><th>ahammadshawki8 (#10)</th><th>paul-bd (#6)</th></tr></thead>
+    <tbody>
+      <tr><td>Spatial alignment</td><td>Per-subject crop <i>centering</i> only (fixed late, the project's biggest single win)</td><td>9-parameter affine <i>registration</i> to a template (GPU, NCC)</td><td>8-DOF canonical warp to a fixed frame</td></tr>
+      <tr><td>Ensemble scale</td><td>25 CNN checkpoints + 1 classical baseline</td><td>~125-150 checkpoints across 5-6 variant families, stacked with a learned meta-model</td><td>50 models (10 members × 5 folds)</td></tr>
+      <tr><td>Augmentation</td><td>Flip + rotation + brightness jitter — didn't clear our own gate</td><td>Strong blur/noise augmentation matched to cross-scanner generalization (validated: 0.3529→0.2716 on unseen scanners)</td><td>Physically-modeled corruption chain (Poisson noise, gamma gain, affine) — every op removed singly made it worse</td></tr>
+      <tr><td>Synthetic data</td><td>None</td><td>None</td><td>Physically-realistic synthetic lesions to populate the hard "mild disease" band, blurred to the scanner's own point-spread function</td></tr>
+      <tr><td>Calibration under distribution shift</td><td>Not modeled — discovered the gap after the fact (0.2975 submit-time vs. 0.3436 confirmed)</td><td>Temperature + probability floor, tuned per submission</td><td>Explicit "temperature ladder": measured that the optimal calibration slope falls as you move from in-fold → public → private, and deliberately shipped flatter than the local optimum to hedge against it</td></tr>
+      <tr><td>Experiment volume</td><td>27 gated notebooks</td><td>~60 experiments</td><td>~400 exploratory scripts, ~20 refuted research arms</td></tr>
+      <tr><td>3D vs. 2D</td><td>3D CNN as the main track throughout</td><td>2D CNNs on axial slabs + a slice-sequence network</td><td>Explicitly tested 3D CNNs and rejected them — a 2D physical projection won by a wide margin on their data</td></tr>
+    </tbody>
+  </table>
+
+  <p><b>What this isn't:</b> evidence that 3D-vs-2D or any single architecture choice explains
+  the gap. paul-bd's own result argues 3D CNNs are not automatically worse, only that they
+  measured worse <i>for their specific representation and data</i>. The pattern that <i>does</i>
+  hold up across both references is procedural: more registration rigor, larger and more
+  diverse ensembles, augmentation validated op-by-op rather than as one bundle, and — the
+  one most directly relevant to our own result — modeling the public/private calibration gap
+  instead of discovering it after the leaderboard closes.</p>
 
   <h2 id="reproduce">Reproduce</h2>
   <p>This repository contains <b>no scan data, per-patient labels, per-patient predictions, or
