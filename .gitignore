@@ -33,3 +33,9 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Copyrighted reference papers (read locally, never published)
+*.pdf
+
+# Claude Code internal planning docs (not part of the public presentation)
+docs/superpowers/

@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DaT Parkinson's Challenge — project write-up</title>
+<meta name="description" content="Classifying dopamine-transporter SPECT scans as normal or abnormal: pipeline, results, what worked, what didn't, and why.">
+<style>
+  :root {
+    color-scheme: light;
+    --page:        #f9f9f7;
+    --surface-1:   #fcfcfb;
+    --text-primary:#0b0b0b;
+    --text-secondary:#52514e;
+    --text-muted:  #898781;
+    --grid:        #e1e0d9;
+    --axis:        #c3c2b7;
+    --border:      rgba(11,11,11,0.10);
+    --series-1:    #2a78d6; /* blue   — covered / primary technique magnitude */
+    --series-2:    #eb6834; /* orange — uncovered */
+    --good:        #006300;
+    --code-bg:     #f0efec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page:        #0d0d0d;
+      --surface-1:   #1a1a19;
+      --text-primary:#ffffff;
+      --text-secondary:#c3c2b7;
+      --text-muted:  #898781;
+      --grid:        #2c2c2a;
+      --axis:        #383835;
+      --border:      rgba(255,255,255,0.10);
+      --series-1:    #3987e5;
+      --series-2:    #d95926;
+      --good:        #0ca30c;
+      --code-bg:     #202020;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.55;
+  }
+  main {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 32px 16px 80px;
+  }
+  h1 { font-size: 1.7rem; margin-bottom: 0.2em; }
+  h2 { font-size: 1.3rem; margin-top: 2.6em; border-top: 1px solid var(--grid); padding-top: 1em; }
+  h3 { font-size: 1.05rem; margin-top: 1.8em; color: var(--text-primary); }
+  p, li { color: var(--text-secondary); }
+  a { color: var(--series-1); }
+  code, pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: var(--code-bg);
+    border-radius: 4px;
+  }
+  code { padding: 0.1em 0.35em; font-size: 0.92em; }
+  pre { padding: 14px 16px; overflow-x: auto; font-size: 0.86rem; }
+  .subtitle { color: var(--text-secondary); font-size: 1.05rem; }
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin: 1.2em 0;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1em 0;
+    font-size: 0.92rem;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--grid);
+    color: var(--text-secondary);
+    vertical-align: top;
+  }
+  th { color: var(--text-primary); font-weight: 600; }
+  td:first-child, th:first-child { color: var(--text-primary); }
+  .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .hero-table td, .hero-table th { border: none; padding: 6px 14px 6px 0; }
+  .hero-value { font-size: 1.35rem; font-weight: 700; color: var(--text-primary); }
+  .pill {
+    display: inline-block;
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    color: #fff;
+  }
+  .pill-reject { background: var(--series-2); }
+  .pill-accept { background: var(--good); }
+  .pill-near   { background: var(--text-muted); }
+
+  /* --- bar list --- */
+  .bar-list { margin: 1.2em 0; }
+  .bar-row { margin-bottom: 14px; }
+  .bar-row .label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.88rem;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+    gap: 12px;
+  }
+  .bar-row .label .val { color: var(--text-secondary); font-variant-numeric: tabular-nums; flex: none; }
+  .bar-track {
+    background: var(--grid);
+    border-radius: 4px;
+    height: 20px;
+    width: 100%;
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    border-radius: 4px 0 0 4px;
+    background: var(--series-1);
+  }
+  .bar-fill.full { border-radius: 4px; }
+
+  /* --- grouped bars (covered vs uncovered) --- */
+  .legend { display: flex; gap: 20px; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 10px; }
+  .legend .swatch { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
+  .grouped-chart { display: flex; flex-direction: column; gap: 22px; margin: 1em 0; }
+  .group { }
+  .group .gname { font-size: 0.9rem; color: var(--text-primary); margin-bottom: 6px; font-weight: 600; }
+  .group .row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .group .row .rlabel { width: 92px; flex: none; font-size: 0.82rem; color: var(--text-secondary); }
+  .group .row .track { flex: 1; background: var(--grid); border-radius: 4px; height: 20px; overflow: hidden; }
+  .group .row .fill { height: 100%; border-radius: 4px; }
+  .group .row .rval { width: 52px; flex: none; text-align: right; font-size: 0.85rem; font-variant-numeric: tabular-nums; color: var(--text-primary); }
+
+  /* --- pipeline --- */
+  .pipeline { display: flex; flex-direction: column; gap: 0; margin: 1.4em 0; }
+  .pstep {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--series-1);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+  }
+  .pstep b { color: var(--text-primary); }
+  .parrow { text-align: center; color: var(--text-muted); font-size: 1rem; padding: 2px 0; }
+
+  footer { margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--grid); font-size: 0.85rem; color: var(--text-muted); }
+  .toc { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.88rem; margin: 1em 0 0; }
+</style>
+</head>
+<body>
+<main>
+
+  <h1>DaT Parkinson's Challenge</h1>
+  <p class="subtitle">Classifying a dopamine-transporter (DaT) SPECT brain scan as normal or
+  abnormal, from the scan alone.</p>
+
+  <p>Built for <a href="https://www.drivendata.org/competitions/311/dat-parkinsons-challenge/">DrivenData's
+  DaT Parkinson's Challenge</a> (French Society of Nuclear Medicine, 2026), closed 2026-09-16.
+  Source: <a href="https://github.com/Alherma7/DaT_Parkinson">github.com/Alherma7/DaT_Parkinson</a>.</p>
+
+  <nav class="toc">
+    <a href="#problem">The problem</a>
+    <a href="#results">Results</a>
+    <a href="#pipeline">Pipeline</a>
+    <a href="#worked">What worked</a>
+    <a href="#didnt">What didn't</a>
+    <a href="#finding">The key finding</a>
+    <a href="#lessons">Lessons</a>
+    <a href="#reproduce">Reproduce</a>
+  </nav>
+
+  <h2 id="problem">The problem</h2>
+  <p>A DaT scan images dopamine transporter density in the striatum. The data: 1,362 training
+  scans from ten French hospital centers, 3D NIfTI volumes with variable dimensions and voxel
+  spacing, no site/scanner label provided. Two facts shaped every design decision:</p>
+  <ul>
+    <li><b>40% of volumes have oblique affines</b> (up to 40.3° tilt) despite all reporting RAS
+    axis codes — resampling has to go through the affine, not just permute axes.</li>
+    <li>The metric is <b>log loss</b>, a proper scoring rule — calibration matters as much as
+    discrimination (AUROC is shown only for reference).</li>
+  </ul>
+
+  <h2 id="results">Results</h2>
+  <div class="card">
+    <table class="hero-table">
+      <tr><td>Final leaderboard</td><td class="hero-value">rank #160</td></tr>
+      <tr><td>Final log loss (confirmed)</td><td class="hero-value">0.3436</td></tr>
+      <tr><td>Final AUROC (confirmed)</td><td class="hero-value">0.9226</td></tr>
+      <tr><td>Submissions used</td><td class="hero-value">3</td></tr>
+    </table>
+  </div>
+
+  <table>
+    <thead><tr><th>Submission</th><th>What changed</th><th class="num">Own score at submit time</th><th class="num">AUROC</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Rung-3 CNN + ComBat-baseline blend (w=0.70)</td><td class="num">0.4648</td><td class="num">0.8796</td></tr>
+      <tr><td>2</td><td>6-variant ensemble, logit-space calibrated blend</td><td class="num">0.4185</td><td class="num">0.8891</td></tr>
+      <tr><td>3 (final)</td><td>Per-subject-centered CNN, crop-coverage bug fixed</td><td class="num">0.2975</td><td class="num">0.9433</td></tr>
+    </tbody>
+  </table>
+
+  <p><b>The gap that matters:</b> submission 3 scored 0.2975 log loss / 0.9433 AUROC at
+  submission time — the best number this project ever produced, and better than the honest
+  cross-validation estimate that preceded it (0.3076). The <b>final confirmed leaderboard
+  result is 0.3436 / 0.9226, rank #160</b>. That's a real generalization gap between the score
+  observed at submit time and the fully-evaluated final result, reported here honestly rather
+  than quoted selectively — the same kind of public-vs-private divergence that reshuffled a
+  large part of this competition's field.</p>
+
+  <h2 id="pipeline">The final pipeline</h2>
+  <div class="pipeline">
+    <div class="pstep"><b>1. Resample</b> each NIfTI to physical spacing (not a fixed voxel shape), affine-aware — oblique volumes need a real affine resample, not just axis permutation.</div>
+    <div class="parrow">↓</div>
+    <div class="pstep"><b>2. Locate the striatum per subject</b> and crop around each subject's own measured centroid, replacing an earlier fixed population-median crop center.</div>
+    <div class="parrow">↓</div>
+    <div class="pstep"><b>3a. Classical baseline</b> — handcrafted asymmetry/ratio features, ComBat-harmonized (Fortin et al. 2018) logistic regression correcting for the scanner-family confound.</div>
+    <div class="pstep"><b>3b. 3D CNN</b> trained on the per-subject-centered crops.</div>
+    <div class="parrow">↓</div>
+    <div class="pstep"><b>4. Blend</b> — CNN + classical baseline, logit-space temperature-calibrated weighted average; weights and temperatures selected via leave-one-fold-out validation, never on the data used to score the final recipe.</div>
+  </div>
+
+  <h2 id="worked">What worked</h2>
+  <p>Ranked by the size of the log-loss improvement measured at the step it was introduced
+  (each gated against the model that came before it, with a paired bootstrap or paired-repeat
+  confidence interval — not a raw before/after comparison).</p>
+
+  <div class="bar-list">
+    <div class="bar-row">
+      <div class="label"><span>Per-subject crop centering (the crop-coverage fix)</span><span class="val">−0.1025</span></div>
+      <div class="bar-track"><div class="bar-fill full" style="width:100%"></div></div>
+    </div>
+    <div class="bar-row">
+      <div class="label"><span>3D CNN replacing the classical baseline as main track</span><span class="val">−0.0770</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:75.1%"></div></div>
+    </div>
+    <div class="bar-row">
+      <div class="label"><span>ComBat harmonization (classical baseline, scanner confound)</span><span class="val">−0.0462</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:45.1%"></div></div>
+    </div>
+    <div class="bar-row">
+      <div class="label"><span>Honest ensemble-OOF measurement (a bug fix, not a new technique)</span><span class="val">−0.0393</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:38.3%"></div></div>
+    </div>
+    <div class="bar-row">
+      <div class="label"><span>CNN + baseline calibrated blend vs. CNN alone</span><span class="val">−0.0271</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:26.4%"></div></div>
+    </div>
+    <div class="bar-row">
+      <div class="label"><span>Logit-space temperature calibration (rung-3 ensemble)</span><span class="val">−0.0244</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:23.8%"></div></div>
+    </div>
+    <div class="bar-row">
+      <div class="label"><span>Recalibration after the 5-variant ensemble</span><span class="val">−0.0217</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:21.2%"></div></div>
+    </div>
+    <div class="bar-row">
+      <div class="label"><span>Multi-variant ensemble (5 rung-3/rung-4 variants)</span><span class="val">−0.0105</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:10.2%"></div></div>
+    </div>
+    <div class="bar-row">
+      <div class="label"><span>Recalibration after the 6-variant ensemble</span><span class="val">−0.0049</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:4.8%"></div></div>
+    </div>
+    <div class="bar-row">
+      <div class="label"><span>Fixed-epoch full-data training (6th ensemble variant)</span><span class="val">−0.0044</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:4.3%"></div></div>
+    </div>
+  </div>
+
+  <table>
+    <thead><tr><th>Change</th><th class="num">Δ log loss</th><th>95% CI</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Per-subject crop centering</td><td class="num">−0.1025</td><td class="num">[−0.1449, −0.0601]</td><td>Fixed crop missed the striatum for ~30% of subjects; per-subject centering gives 100% coverage by construction</td></tr>
+      <tr><td>3D CNN vs. classical baseline</td><td class="num">−0.0770</td><td class="num">[−0.1041, −0.0351]</td><td>Learned volumetric features beat handcrafted asymmetry/ratio features</td></tr>
+      <tr><td>ComBat harmonization</td><td class="num">−0.0462</td><td>≈40–80× run sd</td><td>Corrects the scanner-family confound (χ²=24.54, p=0.00042) at the feature level</td></tr>
+      <tr><td>Honest ensemble-OOF measurement</td><td class="num">−0.0393</td><td>—</td><td>The production model (25-checkpoint average) had never actually been scored as itself; scoring it correctly was a free win sitting in <code>np.mean</code></td></tr>
+      <tr><td>CNN + baseline calibrated blend</td><td class="num">−0.0271</td><td class="num">[−0.0354, −0.0106]</td><td>LOFO-selected blend weight beats the CNN alone</td></tr>
+      <tr><td>Logit-space temperature calibration</td><td class="num">−0.0244</td><td>—</td><td>The two model families' logits were scale-mismatched; calibrating each separately fixed most of the blend's excess ECE</td></tr>
+      <tr><td>Multi-variant ensemble (5 variants)</td><td class="num">−0.0105</td><td>—</td><td>Averaging independently-trained variant families reduces variance</td></tr>
+      <tr><td>Fixed-epoch full-data training</td><td class="num">−0.0044</td><td>—</td><td>A 6th, differently-trained ensemble member adds diversity</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="didnt">What didn't work</h2>
+  <p>Every one of these was tested against a pre-registered statistical gate (a paired
+  bootstrap or paired-repeat confidence interval against the current production model, at
+  the noise level actually measured for that comparison) and rejected.</p>
+
+  <table>
+    <thead><tr><th>Approach</th><th class="num">Δ log loss</th><th>95% CI</th><th>Verdict</th><th>Why it failed</th></tr></thead>
+    <tbody>
+      <tr><td>Family oversampling (boost weak scanner families)</td><td class="num">−0.0035</td><td class="num">[−0.0288, +0.0166]</td><td><span class="pill pill-reject">rejected</span></td><td>Improved one weak family, worsened another — net negative</td></tr>
+      <tr><td>Cosine LR schedule</td><td class="num">+0.0058</td><td class="num">[−0.0179, +0.0080]</td><td><span class="pill pill-reject">rejected</span></td><td>Directionally positive but not significant at 5 repeats; did reduce run-to-run variance</td></tr>
+      <tr><td>Augmentation (flip + rotation + brightness)</td><td class="num">+0.0089</td><td class="num">[−0.0081, +0.0238]</td><td><span class="pill pill-reject">rejected</span></td><td>Directionally positive but not significant; also raised variance</td></tr>
+      <tr><td>class_weight="balanced"</td><td class="num">−0.0007</td><td class="num">[−0.0239, +0.0202]</td><td><span class="pill pill-reject">rejected</span></td><td>Essentially flat, as expected under log-loss calibration concerns</td></tr>
+      <tr><td>NL-means denoising</td><td class="num">−0.0026</td><td class="num">[−0.0284, +0.0231]</td><td><span class="pill pill-reject">rejected</span></td><td>Flat mean, highest run-to-run variance of any experiment tried</td></tr>
+      <tr><td>Bilinear/second-order fusion, ridge-reweighted variants, disagreement-weighted ensembling</td><td class="num">null</td><td>—</td><td><span class="pill pill-reject">rejected</span></td><td>All three literature-sourced candidates came back null, pre-registered</td></tr>
+      <tr><td>Flip test-time augmentation</td><td class="num">−0.0001</td><td>—</td><td><span class="pill pill-reject">rejected</span></td><td>Flat once the blend is properly calibrated; ~doubles inference time for no gain</td></tr>
+      <tr><td>2D thick-slab CNN as 7th ensemble member</td><td class="num">+0.0013</td><td class="num">[+0.0001, +0.0025]</td><td><span class="pill pill-reject">rejected</span></td><td>Reliably worse — but investigating <i>why</i> led directly to the crop-coverage discovery below</td></tr>
+      <tr><td>Coverage flag as an extra blend covariate</td><td class="num">−0.0053</td><td class="num">[−0.0110, +0.0001]</td><td><span class="pill pill-near">near miss</span></td><td>Just barely failed to clear the pre-registered whole-CI-below-zero rule — led to retraining instead of patching</td></tr>
+      <tr><td>Recentered-constant crop (79% coverage, not per-subject)</td><td class="num">−0.0251</td><td>CI crosses 0</td><td><span class="pill pill-near">inconclusive</span></td><td>Partial fix, underpowered on log loss even though AUROC ranked it a clean win — per-subject centering (100% coverage) was needed to pass decisively</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="finding">The key finding: a coverage bug, not a modeling problem</h2>
+  <p>The production crop was centered on a single, fixed point: the population median offset
+  of the striatum, measured on a small stratified sample. That point missed the actual
+  striatum for roughly 30% of subjects. The clearest evidence came from decomposing AUROC
+  by whether each subject's striatum centroid fell inside the fixed crop:</p>
+
+  <div class="legend">
+    <span><span class="swatch" style="background:var(--series-1)"></span>Covered by the fixed crop</span>
+    <span><span class="swatch" style="background:var(--series-2)"></span>Not covered</span>
+  </div>
+  <div class="grouped-chart">
+    <div class="group">
+      <div class="gname">3D CNN</div>
+      <div class="row"><div class="rlabel">Covered</div><div class="track"><div class="fill" style="width:92.9%;background:var(--series-1)"></div></div><div class="rval">0.9293</div></div>
+      <div class="row"><div class="rlabel">Uncovered</div><div class="track"><div class="fill" style="width:70.9%;background:var(--series-2)"></div></div><div class="rval">0.7088</div></div>
+    </div>
+    <div class="group">
+      <div class="gname">Classical baseline (crop-immune)</div>
+      <div class="row"><div class="rlabel">Covered</div><div class="track"><div class="fill" style="width:81.1%;background:var(--series-1)"></div></div><div class="rval">0.8112</div></div>
+      <div class="row"><div class="rlabel">Uncovered</div><div class="track"><div class="fill" style="width:76.7%;background:var(--series-2)"></div></div><div class="rval">0.7666</div></div>
+    </div>
+  </div>
+  <p>The CNN's discrimination collapses specifically on the subjects the crop missed (AUROC
+  0.9293 → 0.7088), while the crop-immune classical baseline barely moves (0.8112 → 0.7666).
+  That isolates the fixed crop itself — not general subject difficulty — as the cause, and
+  rules out recalibration as a fix: this is a discrimination failure, not a confidence
+  problem. Retraining with each subject cropped around their own measured centroid
+  (100% coverage by construction) produced the largest single result of the project:
+  <b>−0.1025 log loss, 95% CI [−0.1449, −0.0601]</b>.</p>
+
+  <h2 id="lessons">Lessons</h2>
+  <h3>Measure honestly before you improve</h3>
+  <p>The single biggest "free" win in this project (−0.0393 log loss) was not a new technique —
+  it was discovering that the production model (a 25-checkpoint average) had never actually
+  been scored as itself. The registered gate had been scoring a different, smaller quantity.
+  Fixing the measurement came before any of the real modeling gains.</p>
+
+  <h3>A statistics bug can hide (or fake) a real result</h3>
+  <p>An early gate compared a 5-repeat mean against twice a <i>single repeat's</i> standard
+  deviation instead of the mean's standard error — a 4.5–7.7σ bar in practice. Two experiments
+  (cosine LR schedule, augmentation) were directionally positive the whole time; the bug never
+  hid a result that should have passed, but a less conservative bug easily could have.</p>
+
+  <h3>The biggest lever came from questioning a basic assumption, not a fancier model</h3>
+  <p>Ten times larger than any other single change, the crop-coverage fix came from
+  re-examining a geometric assumption (a fixed crop center) that had never been directly
+  measured against the data — not from a new architecture, more data, or more compute. It was
+  found indirectly, while investigating why an unrelated 2D architecture experiment failed.</p>
+
+  <h3>Submission-time score and final leaderboard score can diverge</h3>
+  <p>The best score this project ever produced (0.2975 log loss) was observed at submission
+  time, on the last submission. The confirmed final result is 0.3436 — a real gap, not a
+  reporting error, and consistent with the wider divergence between public and private
+  standings reported across this competition's field.</p>
+
+  <h2 id="reproduce">Reproduce</h2>
+  <p>This repository contains <b>no scan data, per-patient labels, per-patient predictions, or
+  trained weights</b> — only code, configuration, and aggregate metrics, per the competition
+  rules.</p>
+  <pre>conda env create -f environment.yml
+conda activate dat-parkinson
+
+# all pipeline code is under test with synthetic data
+pytest
+
+# notebooks/01 .. 27 reproduce the full experimental record in order,
+# from EDA through the final coverage-fix retrain
+
+# package a submission from submission_src/
+python scripts/build_submission_assets.py</pre>
+  <p>Full dated development log — every decision, gate result, and bug found along the way —
+  is in <a href="PROGRESS.md">PROGRESS.md</a>.</p>
+
+  <footer>
+    MIT licensed. No competition data is redistributed in this repository.
+  </footer>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,860 @@
+# Development log
+
+Chronological, dated record of every decision, experiment, gate result and
+bug found while building this project — kept exactly as it was written
+during development. For the short summary (final result, pipeline, what
+worked / what didn't), see the [project site](index.html) or the
+[README](../README.md).
+
+# DaT Parkinson's Prediction Challenge
+
+DrivenData / SFMN competition: classify DaT (dopamine transporter) SPECT
+scans as normal (0.0) or abnormal (1.0). Metric: log loss (AUROC shown for
+reference only). Code-execution submission (Docker, `main.py`, 3h budget,
+single A100 80GB, no network). Deadline: 2026-09-16 23:59 UTC.
+
+See `problem_description.txt`, `about_data.txt`, `submission_format.txt`,
+`rules.txt`, `home.txt` for the full competition docs.
+
+Project follows the `structuring-ml-projects` skill (+ `deep-learning-imaging.md`
+and `code-execution-submission.md` extensions).
+
+## Constraints that shape this project
+
+- Multicenter data (10 French hospital centers), variable volume shape/voxel
+  spacing — no site/scanner label in `train_labels.csv`, and none recoverable
+  from the NIfTI headers (all descriptive string fields are scrubbed). Best
+  available scanner proxy is **(in-plane spacing family, z-spacing, FOV_xy,
+  dtype, obliquity)** — not raw (shape, spacing), which over-fragments one
+  acquisition into ~12 groups and fails its own significance test.
+- **40% of volumes have oblique affines** (up to 40.3° tilt) despite all
+  reporting RAS axis codes. `data.py` must resample through the affine;
+  `as_closest_canonical()` is not sufficient.
+- Log loss is a proper scoring rule — gate on calibrated probability, not AUC.
+- External data/pretrained models: license + public-availability +
+  commercial-use terms must be recorded in `RESOURCES.md` before use.
+  **DINOv3 is not prize-eligible** (license conflict, confirmed by
+  DrivenData staff). ImageNet-pretrained weights and PPMI eligibility are
+  **unresolved** as of the forum check on 2026-09-07 — treat as a risk, not
+  a default-safe choice.
+- AI-assistant data rule (DrivenData staff, forum thread on AI coding
+  assistants): raw scan files and per-patient labels/predictions must never
+  be read by a third-party AI tool that could retain them. Claude does not
+  read `.nii.gz` files or row-level `train_labels.csv` contents in this
+  repo — only code, config, and aggregate metrics.
+
+## Progress
+
+- 2026-09-07: Project scaffolded. Data downloaded and extracted to
+  `data/raw/` (1362 training volumes + labels, 20-sample smoke test set).
+  Git repo initialized.
+- 2026-09-07: Prior-art scan done (`structuring-ml-projects` step 0) —
+  found a 2026 reproduction study showing training protocol matters more
+  than architecture for CNN DaT-SPECT classification on small datasets, a
+  striatum-cropping preprocessing pipeline, an alternative 2D-slice +
+  attention architecture, and several PPMI-based GitHub reference
+  implementations. Logged in `RESOURCES.md`.
+- 2026-09-07: `notebooks/01_eda_volumes.ipynb` written, covering the 7 EDA
+  questions grounded in the prior-art scan (geometry, class balance,
+  scanner-proxy confound, orientation, background/intensity, striatum
+  location + asymmetry). Not yet run — cells that load pixel data are
+  meant to be run and inspected by the user, not Claude (see AI-assistant
+  data rule above).
+- 2026-09-08: EDA run and documented. Added 2 extra checks (data integrity,
+  smoke-test geometry compatibility) after a coverage review, and 2
+  quantitative sub-checks under the striatum/asymmetry question (centroid +
+  bbox, L-R asymmetry index by class) since visual-only assessment isn't
+  something either of us has the clinical background to judge reliably.
+  Key decisions:
+  - **Resampling target:** physical spacing, not a fixed voxel shape — 66
+    distinct shapes / 52 distinct spacings observed (dominant:
+    `(256,256,256)@2.46mm`, 33.8%).
+  - **Class balance:** 54.8% pathological / 45.2% normal — mild, Stratified
+    K-Fold is enough; `class_weight="balanced"` is an experiment to
+    validate, not a default.
+  - **Scanner-proxy confound** — target rate 0.593/0.502/0.455 across the
+    three largest (shape,spacing) groups vs. 0.548 average. **Superseded
+    on 2026-09-08 by a significance test — see the review entry below;
+    the (shape,spacing) proxy's own omnibus test is not significant.**
+  - **Orientation:** `aff2axcodes` reports RAS for 1362/1362.
+    **Superseded on 2026-09-08: `aff2axcodes` reports only the *closest*
+    canonical axes and 544/1362 volumes are actually oblique — see below.**
+  - **Background/normalization:** p30 threshold recovers real background;
+    per-volume normalization is mandatory (max/p99 span several orders of
+    magnitude across volumes); clip small negative artifacts before
+    thresholding.
+  - **Crop center/size — NOT resolved. Superseded on 2026-09-08**, see the
+    review entry below. The percentile-threshold estimates (p95, then p99 +
+    largest connected component, median bbox ≈29%/33%/32% of shape, median
+    58.5 components) measured the whole head, not the striatum, and were
+    expressed as a fraction of each volume's own shape, which is not
+    comparable across a 3× range of field of view. No crop number is
+    settled; `config.CROP_SIZE_MM` is deliberately `None`.
+  - **L-R asymmetry differs by class** (median 0.073 pathological vs.
+    0.030 normal). **The flip-augmentation conclusion drawn from this was
+    wrong and is retracted — see the review entry below.**
+  - Full what/why/source/found/decision detail lives in the notebook's own
+    markdown cells, one per section.
+- 2026-09-08: **EDA methodology review + header-only re-analysis.** The
+  notebook's structure held up; three of its quantitative conclusions did
+  not. Corrections, and new header-only results (no voxel data read):
+  - **Evaluation reference point pinned:** base rate 0.548458 (747/615),
+    constant-prediction **log loss = 0.688443**. Now in `config.py` as
+    `BASELINE_LOGLOSS`. Every model number gets quoted against it.
+  - **The metadata shortcut is worth essentially nothing.** Now reproduced
+    directly in the notebook (section 11), fitting classifiers on header
+    metadata alone (shape, spacing, FOV, voxel count, obliquity, dtype,
+    spacing-family one-hots; 31 features) to predict `is_pathologic`:
+    logistic regression 5-fold CV log loss **0.688952** (+0.000509 vs.
+    baseline, AUROC 0.551); HistGradientBoosting **0.735176**, i.e. *worse*
+    than predicting the base rate (AUROC 0.523, spread across 5
+    fold-reshuffles sd 0.0025). A site-correlated shortcut on metadata is
+    therefore not an exploitable leak here. This is a negative result and
+    it **downgrades**, but does not remove, the fold-design concern.
+  - **Section 3's confound claim needed the test it never ran, and the
+    grouping was wrong.** χ² across the 11 (shape,spacing) groups with
+    n≥20: **χ²=15.22, dof=10, p=0.124 — not significant.** The
+    (shape,spacing) proxy over-fragments: the whole `(128,128,z)@3.895mm`
+    family is one acquisition split across ~12 groups by axial coverage
+    alone. Collapsing to **in-plane spacing families** gives 7 groups with
+    n≥20 and **χ²=24.54, dof=6, p=0.00042** — the confound is real, but it
+    lives in the *small* families the notebook dismissed as noise
+    (~1.5-1.8 mm: n=48, rate 0.354; ~1.47 mm: n=31, 0.355) rather than in
+    the large ones. Pairwise on the big three: 460 vs 143 z=+2.93
+    (p=0.0034), 460 vs 207 z=+2.20 (p=0.028), 207 vs 143 p=0.378.
+  - **40% of volumes are oblique — section 4's conclusion was wrong.**
+    `nib.aff2axcodes` reports only the *closest* canonical axes, so
+    "1362/1362 RAS" did not mean axis-aligned. **544/1362 (39.9%)** have a
+    non-diagonal affine rotation block: median tilt 4.7°, max **40.3°**.
+    `as_closest_canonical()` only permutes/flips axes and will **not**
+    correct this. `data.py` must do a real affine-aware resample.
+    qform/sform agree exactly on all 1362 (both code 1), diag signs all
+    `+++`.
+  - **Obliquity is a strong scanner signature** and is uncorrelated with
+    the target (0.546 oblique vs. 0.550 axis-aligned), so it is a clean
+    site marker: 2.398 mm → 100% oblique (n=149), 3.895 mm → 100% (n=325),
+    ~3.30 mm → 67% (n=39), 2.46 mm → 8% (n=528), and 2.30/1.47/2.00/3.59/
+    4.42 mm → 0%. Best available site proxy = (in-plane spacing family,
+    z-spacing, FOV_xy, dtype, obliquity).
+  - **No scanner strings survive in the headers.** `descrip`, `aux_file`,
+    `db_name`, `intent_name` are empty on all 1362 (organizers scrubbed
+    them); `scl_slope`/`scl_inter` are NaN on all 1362. A real centre id
+    cannot be recovered this way — logged as a negative result so it is
+    not retried.
+  - **Section 5's negative-intensity explanation was wrong.** It attributed
+    negative minima to `scl_slope`/`scl_inter` scaling, but those are unset
+    on every volume. The actual cause: **16 volumes are stored as `int16`,
+    not `uint16`** (1346 are `uint16`), contradicting the problem
+    description. The `np.clip(..., 0, None)` guard is still right; the
+    reason recorded for it was not.
+  - **Field of view computed (shape × spacing), which nothing had done.**
+    FOV[x,y] 175.6 → 629.8 mm, FOV[z] **108.0** → 629.8 mm. The z minimum
+    is what bounds any fixed-mm crop: 1 volume under 110 mm, 4 under
+    120 mm, 69 under 140 mm. Recorded as `config.MIN_FOV_MM`.
+  - **Resampling target chosen: 2.46 mm isotropic** (`config.TARGET_SPACING`)
+    — the median *and* modal spacing, identity for 528 volumes, and it
+    keeps an ~11 mL striatum at ~739 voxels instead of ~186 at 3.895 mm.
+  - **Flip-augmentation caution retracted.** The section-6b index
+    `|left−right|/(left+right)` is *invariant* under a left-right flip, so
+    it cannot be evidence for or against flip augmentation in either
+    direction. Deciding this needs the **signed** index instead; until that
+    is run, the project has no evidence on flip.
+    **Resolved 2026-09-08** — corrected 6b run on all 1362 volumes: signed
+    index means -0.0037 (normal) / -0.0083 (pathological), both
+    **not significantly different from 0** (Wilcoxon p=0.056 / p=0.064) and
+    not different from each other (Mann-Whitney p=0.162). Magnitude *is*
+    highly different by class (p<0.00001, ~2.4-2.7× higher pathological) —
+    clinically coherent (PD causes real asymmetry, but which side varies
+    patient to patient, so the population-level signed average is ~0 in
+    both groups). **Flip augmentation is safe to try** — no population
+    directional signal to destroy, and the actual discriminative signal
+    (magnitude) is flip-invariant regardless. p-values are close to 0.05,
+    though, so validate via the gate rather than treating this as settled.
+  - **Section 6a's striatum estimate is invalid** (crop numbers retracted
+    above). `np.percentile(data, 99)` retains 1% of *all* voxels by
+    construction — 167,772 voxels ≈ 2.5 L at 2.46 mm in the dominant
+    (256,256,256) group, larger than a whole head, against an ~11 mL
+    striatum. The measured bbox is also just a restatement of the
+    threshold: for a blob of fraction *f*, the bbox linear fraction tracks
+    *f*^(1/3), and 0.05^(1/3)=0.37 → 0.01^(1/3)=0.215 explains the whole
+    p95→p99 "improvement". Corrected cells (physical-volume mask in mL, two
+    largest components, results in mm, broken down by site proxy) are
+    written and awaiting a run.
+- 2026-09-08: **Follow-up reference/prior-art search** (extends the
+  2026-09-07 scan), targeted at the confounds and gaps the EDA methodology
+  review actually found, plus a Kaggle check for comparable projects. All
+  entries logged in `RESOURCES.md`, full detail there.
+  - **Harmonization, for the section 3/3a confound**: Fortin et al. 2018
+    (ComBat, NeuroImage 167:104-120) — the field's standard tool for
+    site-effect removal on derived features. A 7-site PPMI radiomics study
+    (Frontiers 2022) using the *same* confound reports AUC 0.71→0.77 after
+    ComBat-GAM and states per-volume intensity normalization alone did not
+    remove scanner variability — independent confirmation that section 5's
+    normalization and section 3a's fold-stratification plan address
+    different problems, not the same one. Logged as a candidate for the
+    classical/radiomics baseline (`## Next steps`), not the 3D-CNN track.
+  - **PPMI's own SBR methodology**: standardized VOI-atlas approach (not a
+    percentile threshold) over caudate/putamen with the occipital lobe as
+    reference, and **left-right percent asymmetry as a standard clinical
+    metric** — confirms section 6b's asymmetry index measures a real
+    clinical quantity, and is a fallback if the physical-volume threshold
+    in the corrected 6a proves unreliable once run.
+  - **Kaggle check**: no DaT-SPECT competition exists (niche modality).
+    Closest analog by problem shape: RSNA-MICCAI Brain Tumor Radiogenomic
+    Classification (multi-parameter 3D MRI, multi-institution, AUROC).
+    **The load-bearing finding isn't a technique, it's a warning**: the
+    BraTS 2021 benchmark's own follow-up validation study found that of
+    models scoring well on small single-center studies, **~80% showed no
+    significant difference from chance** once validated on the full
+    multicenter set. Several of this project's own cited PPMI papers report
+    92-99.5% accuracy on small (200-2720 volume) single/few-site subsets —
+    the same shape of claim. Do not treat those numbers as a realistic
+    target until validated on the actual 10-center, 1362-volume mix
+    (reinforces the leave-one-family-out check below).
+  - One Kaggle dataset candidate ("Parkinson's Disease Dat and MRI Scans",
+    rishikjha) checked and rejected — no stated license or source.
+  - **Follow-up (2026-09-08, user-provided PDF): Wenzel et al. 2019**
+    (EJNMMI, the paper behind `mtwenzel/parkinson-classification`) closes
+    the last open citation from the 2026-09-07 scan. Directly actionable:
+    a CNN trained only on their higher-resolution PPMI images generalized
+    badly to lower-resolution ones (accuracy 0.629, effectively predicting
+    one class), while a CNN trained on lower-resolution data generalized
+    well to higher-resolution (0.945) — asymmetric. **For us**: don't let
+    3D-CNN training skew toward the dominant 2.46mm family (528/1362,
+    highest-resolution); include the full spacing range, biased if
+    anything toward the coarser end. Also: their "hottest voxels" SBR
+    method — average the hottest voxels up to a **fixed physical volume**
+    (15 mL for whole striatum) — is the same technique EDA section 6a's
+    corrected code already uses, independent validation it's not ad hoc.
+    Full detail in `RESOURCES.md`.
+- 2026-09-08: `environment.yml` added and `dat-parkinson` conda env created
+  (per the `structuring-ml-projects` skill's per-project environment step).
+  Data-science stack plus PyTorch 2.14.0+cu126/torchvision 0.29.0+cu126 —
+  confirmed `torch.cuda.is_available() == True` on the local GPU (RTX 4060
+  Laptop, 8GB). The PyPI `torch` wheel defaults to CPU-only; the CUDA build
+  needs `--extra-index-url https://download.pytorch.org/whl/cu126` pinned
+  in `environment.yml` (cu121/cu124 don't publish this torch release).
+- 2026-09-08: **Fixed a BLAS/OpenMP runtime crash in `dat-parkinson`**,
+  found while checking `nibabel.processing`'s API ahead of the CNN
+  data-plumbing plan: any BLAS call (even a bare 4x4 `@` matmul) crashed
+  the process natively (access violation, no Python traceback) — the env
+  had both MKL and libgomp (GNU OpenMP) DLLs loaded at once, a known
+  Windows conda clash. Also, independently, nibabel 5.4.2's
+  `Nifti1Image(data, affine)` crashes under numpy>=2.5 (verified 2.2.6
+  works). Fixed in `environment.yml`: `numpy<2.3` + `libblas=*=*openblas`.
+  Verified from a fully fresh `conda env create`: nibabel construction +
+  `resample_to_output`, scipy, scikit-learn, torch+CUDA all work, 28/28
+  project tests pass.
+- 2026-09-09: **Rung 3 gate PASSED** in `notebooks/07_cnn_rung3.ipynb`:
+  5-fold × 5-repeat nested-CV CNN, mean log loss **0.4520** (sd 0.0097)
+  vs. `build_combat_baseline()` at 0.5290 — paired bootstrap 95% CI of the
+  delta fully negative ([-0.1041, -0.0351]), clears the 2×-noise-threshold
+  gate by 0.0770 vs. 0.0218. Per-family log loss worst on the 2.46mm
+  (0.5191) and 3.895mm (0.5035) families, best on 2.30mm (0.3177).
+  **3D CNN is now the winning track.** Note: `notebooks/06_cnn_rung2.ipynb`'s
+  batch/LR sweep and LOFO transfer-check cells didn't survive the run
+  (only the cache-build and helper-def cells remain on disk); rung 3 used
+  `batch=32, lr=2e-3` without an on-record confirmation of the winner —
+  left as-is since rung 3 cleared the gate with a wide margin anyway.
+  - **Final model decided: CNN+baseline blend at w_cnn=0.70**, not the
+    CNN alone. The notebook's original 3-point grid check (w=0.25/0.5/0.75)
+    was a cheap fallback, not a validated choice; added a leave-one-
+    repeat-out cell (`src/evaluate.py::paired_bootstrap_ci`, TDD) that
+    picks the weight on 4 of the 5 CNN OOF repeats and scores it on the
+    held-out one, so no weight is ever evaluated on the data used to
+    select it. **w_cnn=0.70 was selected unanimously in all 5 LOFO
+    folds.** Honest blend mean log loss 0.4250 (sd 0.0099) vs. CNN-alone
+    0.4520 (sd 0.0109) — beats it by +0.0271, above the 2×-noise
+    threshold (0.0218); paired bootstrap 95% CI on the blend-vs-CNN delta
+    [-0.0354, -0.0106], fully negative. **`main.py` must run both
+    models and blend their probabilities at w_cnn=0.70.**
+- 2026-09-09: **Submission packaging built and smoke-tested successfully.**
+  `src/config.py` (runtime-environment auto-detection),
+  `src/features.py::extract_baseline_features`,
+  `src/model.py::rung3_checkpoint_filenames`,
+  `src/submission.py::combine_predictions`,
+  `scripts/build_submission_assets.py`, and `submission_src/main.py`
+  written (TDD where applicable), reviewed via subagent-driven
+  development (one Critical fix before merge: missing/partial
+  checkpoints would have silently written a NaN-filled `submission.csv`
+  with no exception — now raises `FileNotFoundError`). Ran
+  `scripts/build_submission_assets.py`, packaged with the runtime
+  repo's (`drivendataorg/competition-sfmn-parkinsons-runtime`) `just
+  pack-submission`, and ran `just test-submission` against the 20-volume
+  smoke test set:
+  - **Exit code 0, ~64s total** (well under the 6-minute smoke-test
+    limit), GPU available inside the container (`device=cuda`).
+  - All 25 rung-3 checkpoints loaded via `torch.load` with no error,
+    despite the local/runtime torch version gap (2.14.0+cu126 vs.
+    2.12.1+cu129) flagged as a risk beforehand.
+  - Volume-caching worked as designed: checkpoint 1 took 34.1s (all 20
+    volumes' preprocessing), checkpoints 2-25 took 0.0-0.4s each (reused
+    the cache, not reprocessed).
+  - `sklearn.InconsistentVersionWarning` fired (pipeline pickled with
+    1.9.0, runtime has 1.8.0) — non-fatal, pipeline still ran correctly;
+    the version-gap risk flagged in the final review did materialize,
+    just didn't break anything this time.
+  - 20/20 volumes had a valid classical-feature mask (0 CNN-alone
+    fallback rows).
+  - `submission/submission.csv`: header `uid,is_pathologic` and 21 lines
+    (1 header + 20 rows), exactly matching `submission_format.csv`'s
+    shape.
+  - **Confirmed on DrivenData's own platform too**: submitted the same
+    `submission.zip` as a platform smoke test (separate from the
+    3-per-week regular submission limit — 3 smoke tests/day, no cost to
+    the weekly quota). Exit 0, ~35s. Scored (smoke tests get scored for
+    debugging even though excluded from the leaderboard): **log loss
+    0.3051** — well below the classical baseline (0.5290) and the CNN's
+    CV mean (0.4520), though n=20 is small/high-variance so this single
+    number isn't the expected real-test-set score, just a strong signal.
+  - **Bug caught mid-flight**: `data.load_volume`'s degenerate-volume
+    warning embedded the real test uid, and DrivenData's log scanner
+    auto-filtered two lines from a full-submission run with an explicit
+    disqualification warning. Fixed in `src/data.py` (commit 069bb28,
+    TDD) — the message never includes uid, in any context. Rebuilt
+    `submission.zip` immediately after.
+- 2026-09-09: **First full/regular submission: log loss 0.4648** on the
+  real (undisclosed size, ~600 volumes estimated from timing) held-out
+  test set. Exit 0, ~15m20s (well under the 3h limit). Beats the
+  classical baseline by -0.064; ~1.3 sd from the CNN's own 5×5 CV mean
+  (0.4520, sd 0.0109) — normal CV-vs-holdout variance. Used 1 of the
+  3-per-week regular submissions (2 remain before the 2026-09-16
+  deadline). This run used the pre-fix zip (see the uid-leak bug just
+  above) but succeeded anyway since DrivenData's filtering caught it;
+  the rebuilt zip should be used for any further submissions.
+  Public leaderboard: **rank #254**, log loss 0.4648, AUROC 0.8796.
+- 2026-09-09: **Rung 4 started** — revisiting the prior-art techniques
+  logged in `RESOURCES.md`'s initial scan but never tried (augmentation,
+  LR schedule, family-oversampling, `class_weight`, denoising), each
+  gated against the current CNN (0.4520) rather than the classical
+  baseline. `notebooks/08_training_throughput_check.ipynb` confirmed
+  training is GPU-bound (70% of synthetic-only throughput) and a full
+  rung-3-scale run (25 fold-trainings) costs ~7-18 minutes, not hours —
+  all 5 experiments comfortably fit before 2026-09-16.
+  - **Experiment 1 (family-oversampling): GATE NOT PASSED — negative
+    result.** `notebooks/09_cnn_family_oversampling.ipynb`: boosting the
+    2.46mm/3.895mm families (rung 3's two worst performers) via
+    `WeightedRandomSampler` (`evaluate.family_oversample_weights`,
+    boost_factor=2.0 won the 3-candidate mini-check) gave 5-repeat mean
+    0.4555 (sd 0.0114) — *worse* than the current CNN by -0.0035, inside
+    the 0.0228 noise band. Paired bootstrap 95% CI [-0.0288, +0.0166]
+    straddles zero. **Per-family detail**: 3.895mm actually improved
+    (0.5035→0.4823) but 2.46mm got worse (0.5191→0.5330), netting out
+    negative overall — oversampling one weak family can trade off
+    against another. Current rung-3 CNN stays the production model;
+    `rung4_familybias_*` checkpoints not used.
+  - **Experiment 2 (cosine LR schedule): GATE NOT PASSED — negative
+    result, but notable.** `notebooks/10_cnn_lr_schedule.ipynb`:
+    `CosineAnnealingWarmRestarts` (T_0=`config.EPOCHS`, `T_mult`=1,
+    `eta_min`=1e-6 — Chegodaev et al. 2026's literal values; no restart
+    ever fires in practice since early stopping means folds never reach
+    epoch 50, so this really tests smooth cosine decay, not restarts)
+    gave 5-repeat mean 0.4462 (sd 0.0063) — *better* than the current
+    CNN by +0.0058, but under the 0.0218 noise threshold; paired
+    bootstrap 95% CI [-0.0179, +0.0080] straddles zero. **Notable**: sd
+    dropped from 0.0109 (current CNN) to 0.0063 — the schedule may be
+    stabilizing training across seeds even without a mean-log-loss win
+    large enough to clear this gate. Current rung-3 CNN stays the
+    production model; `rung4_lrsched_*` checkpoints not used, but this
+    is a candidate to revisit (e.g. combined with another experiment)
+    if time allows after the remaining rung-4 experiments.
+  - **Experiment 3 (augmentation): GATE NOT PASSED — negative result,
+    same direction-but-not-significant pattern as experiment 2.**
+    `notebooks/11_cnn_augmentation.ipynb`: flip + ±10° rotation (A-P/S-I
+    plane only) + narrow brightness jitter (`src/augment.py`) gave
+    5-repeat mean 0.4431 (sd 0.0158) — *better* than the current CNN by
+    +0.0089, but sd rose to 0.0158 (vs. 0.0109 current), pushing the
+    noise threshold to 0.0316 — well above the improvement. Paired
+    bootstrap 95% CI [-0.0081, +0.0238] straddles zero. Third
+    experiment in a row with a directionally positive mean that doesn't
+    clear the noise bar; current rung-3 CNN stays the production model,
+    `rung4_augment_*` checkpoints not used.
+  - **Experiment 4 (`class_weight="balanced"`): GATE NOT PASSED —
+    negative result, as expected.** `notebooks/12_cnn_class_weight.ipynb`:
+    `BCEWithLogitsLoss(pos_weight=...)` (`evaluate.compute_pos_weight`,
+    per-fold) gave 5-repeat mean 0.4527 (sd 0.0129) — essentially flat,
+    *worse* than the current CNN by -0.0007, inside the 0.0258 noise
+    band. Paired bootstrap 95% CI [-0.0239, +0.0202] straddles zero.
+    Matches the prior expectation stated in the notebook's intro (mild
+    imbalance, and a specific argument against `pos_weight` distorting
+    log-loss calibration). Current rung-3 CNN stays the production
+    model; `rung4_classweight_*` checkpoints not used.
+  - **Gate fixed (2026-09-10, before experiment 5): `evaluate.py`'s
+    rung-4 gate was mis-specified** — an Opus review found the paired
+    bootstrap CI was computed from a single arbitrarily-chosen CV
+    repeat (whose sign could, and for experiments 1 and 3 did,
+    disagree with the actual 5-repeat mean), and the "2x noise
+    threshold" compared a 5-repeat mean against 2x a *single* repeat's
+    sd instead of the mean's standard error (sd/√5) — a 4.5-7.7σ bar in
+    practice. Replaced with `evaluate.paired_repeat_gate`: a proper
+    one-sample paired t-interval (mean ± t·sd/√n) over per-repeat
+    deltas. Redone correctly, experiments 1 and 4 stay clearly negative
+    (p≈0.71, p≈0.87); experiments 2 and 3 are directionally positive
+    but still don't reach significance at 5 repeats (p≈0.29, p≈0.16) —
+    genuinely underpowered, not hidden by the bug. Also fixed:
+    `train.py::train_one_fold` gained an optional `val_loss_fn` so
+    experiment 4's early stopping no longer selects on the
+    `pos_weight`-reweighted loss; experiment 1 gained a
+    `boost_factor=1.0` sampler-only control; experiment 3's patience
+    was raised to 20 (from `config.PATIENCE=10`) since augmented
+    training was stopping before convergence. Full detail in project
+    memory `project_dat_parkinson_rung4_gate_review.md`. Notebooks
+    09-12 updated to use the fixed gate but not yet re-run.
+  - **Experiment 5 (NL-means denoising): GATE NOT PASSED — flat
+    result, highest run-to-run variance of all 5 experiments.**
+    `notebooks/13_cnn_denoising.ipynb`: patch-wise NL-means denoising
+    (`data.denoise_volume`, Boulkrinat et al. 2025 defaults) added to
+    `data.py`'s shared preprocessing before normalization — the only
+    rung-4 experiment touching the pipeline itself, not just a
+    training-loop knob. Per-volume cost: denoising adds 4.1x the
+    resample+crop cost (1100ms vs. 271ms/volume, n=15 sample);
+    estimated full 1362-volume cache rebuild ~31 min. Fold-0 sanity
+    check was promising in isolation (log loss 0.3614 vs. rung 3's
+    0.4005 on the same fold/seed), but did not hold up over the full
+    5×5: per-repeat deltas (denoised − current CNN) = [-0.0279,
+    -0.0052, +0.0008, -0.0098, +0.0291] — mean -0.0026 (essentially
+    flat), sd 0.0207 (the widest of any rung-4 experiment, roughly
+    double experiments 1/2/4's), 95% CI [-0.0284, +0.0231] comfortably
+    straddling zero. Unlike experiments 2/3, this isn't a case of "real
+    effect, underpowered" — the mean itself is near zero and the sign
+    of the per-repeat delta flips twice. `config.USE_NLM_DENOISING`
+    stays `False` everywhere (including `submission_src/main.py`);
+    `rung4_denoise_*` checkpoints not used.
+  - **Rung 4 concluded (2026-09-10): 0/5 experiments passed the gate.**
+    The rung-3 CNN + classical-baseline blend (`w_cnn=0.70`, real
+    submission log loss 0.4648) remains the production model. If time
+    allows before the 2026-09-16 deadline, the highest-value follow-up
+    per the Opus review is re-running experiments 2 (cosine LR) and 3
+    (augmentation) combined at a higher repeat count (15-30) — both are
+    directionally positive, mechanically independent, and experiment 2
+    reduces variance while experiment 3 increases it — rather than
+    re-litigating experiments 1, 4, or 5.
+- 2026-09-10: **Post-rung-4 strategic review (Opus) + ensemble/calibration
+  roadmap, items 1-7.** Headline finding: the production model had never
+  been correctly measured — the rung-3 gate scored the *mean of 5
+  individual* CNN OOF arrays (log loss 0.4520), but `submission_src/main.py`
+  ships a *25-checkpoint average*, a different quantity nobody had scored.
+  Ranked roadmap: (1) score the honest ensemble OOF, (2) calibration
+  post-processing, (3) ensemble all rung-3+rung-4 checkpoints, (4) re-tune
+  the CNN/baseline blend weight, (5) fixed-epoch full-data training, (6)
+  bounded architecture check (not yet done), (7) flip TTA on
+  flip-augmented checkpoints only. All local-CV, zero submission cost.
+  - **Item 1** (`notebooks/14_ensemble_calibration_diagnosis.ipynb`):
+    honest 5-way rung-3 ensemble OOF = log loss **0.4127**, AUROC 0.8915,
+    ECE 0.0316 (vs. the old single-checkpoint gate's 0.4520 — a free win
+    that was sitting in `np.mean`). Plain probability-space blend
+    (`w_cnn=0.70`) barely improved on that (0.4119) despite AUROC rising
+    to 0.9081, because ECE roughly doubled to 0.0747 — two differently-scaled
+    sources blended without recalibration.
+  - **Items 2+4** (`notebooks/15_calibration_blend_retune.ipynb`):
+    LOFO-validated joint grid search over (T_cnn, T_baseline, w) in logit
+    space. Honest per-repeat LOFO scores [0.4100, 0.4053, 0.3852, 0.4043,
+    0.3984], mean **0.4006** sd 0.0096 — **-0.0244** vs. the old
+    uncalibrated single-weight LOFO blend (0.4250). 4/5 folds picked
+    T_cnn≈1.00, T_baseline≈0.50, w≈0.70 — the classical baseline's logits
+    were scale-mismatched against the CNN's; that mismatch, not the CNN
+    itself, was inflating the blend's ECE. Recomputed the classical
+    baseline's OOF for all 5 seeds (`baseline_oof_seed{42..46}.npy`,
+    fixing a fold-mismatch gap).
+  - **Item 3** (`notebooks/16_multivariant_ensemble.ipynb`): one
+    pre-registered comparison — equal-weight average of all 5 non-denoise
+    rung3+rung4 variant families (rung3, familybias, lrsched, augment,
+    classweight; 25 arrays) vs. rung3-only — log loss **0.4022** vs. 0.4127
+    (**-0.0105**), AUROC 0.8984 vs. 0.8915 (+0.0069), both metrics
+    favorable. **Adopted**: all 5 variants ensembled (125 checkpoints).
+  - **Items 2+4 re-run** (`notebooks/17_calibration_blend_retune_allvariants.ipynb`):
+    same LOFO method against the 5-variant ensemble — **5/5 folds
+    independently picked the identical triple** (T_cnn=0.50,
+    T_baseline=1.00, w=0.45). LOFO scores [0.3884, 0.3783, 0.3718, 0.3742,
+    0.3820], mean **0.3789** sd 0.0066 — **-0.0217** further improvement
+    over item 2's rung3-only calibration. Pooled candidate: log
+    loss=0.3684, AUROC=0.9161, ECE=0.0369.
+  - **Item 5** (`notebooks/18_fixed_epoch_full_data.ipynb`): trained on
+    100% of the outer-train fold, fixed 22-epoch budget (from the real
+    median/mean epoch count across 128 prior fold-trainings) instead of
+    early stopping. Alone: mean 0.4475 sd 0.0122. Pre-registered ensemble
+    comparison: 5-variant (0.4022/0.8984/0.0360) vs. +fixedepoch as a 6th
+    variant (**0.3978/0.9004/0.0305**) — delta -0.0044, all 3 metrics
+    favorable. **Adopted**: 6 variants (150 checkpoints).
+  - **Recalibration re-run** (`notebooks/19_calibration_blend_retune_sixvariants.ipynb`):
+    LOFO scores [0.3810, 0.3760, 0.3682, 0.3678, 0.3772], mean **0.3740**
+    sd 0.0058 (tightest yet) — **-0.0049** vs. item 4's 5-variant result.
+    3/5 folds picked the same triple as notebook 17, 2/5 a nearby one.
+    **Adopted recipe**: T_cnn=0.58, T_baseline=0.88, w=0.53 (mean of the 5
+    triples), on the 6-variant ensemble.
+  - **Item 7** (`notebooks/20_flip_tta_augment.ipynb`): L-R flip TTA,
+    applied only to the `rung4_augment` checkpoints (the only ones trained
+    with flips, hence the only flip-equivariant ones — EDA 6b established
+    the discriminative asymmetry signal is flip-invariant). TTA(avg) beat
+    plain in 5/5 seeds individually. Pre-registered ensemble comparison:
+    plain augment (0.3978/0.9004/0.0305) vs. TTA'd augment
+    (0.3976/0.9005/0.0293) — delta -0.0002 log loss, ECE also improved;
+    that stage's own gate rule said adopt, and TTA'd OOF was saved as
+    `rung4_augment_tta_oof_seed{42..46}.npy`. **Superseded by the
+    recalibration below — final call is NOT adopted, see that entry.**
+  - **Recalibration re-run #2** (`notebooks/21_calibration_blend_retune_augmenttta.ipynb`):
+    re-fit notebook 19's exact LOFO method against the flip-TTA
+    composition. **Honest LOFO mean=0.3739, sd=0.0059 vs. notebook 19's
+    plain-augment 0.3740, sd=0.0058 — delta -0.0001, inside the sd, flat.**
+    (The pooled candidate, 0.3642 vs. notebook 19's 0.3646, looks like a
+    win but both carry this project's own flagged mild-optimism caveat —
+    the LOFO mean is what decides.) Parameter selection was also less
+    coherent (3 distinct triples across 5 folds vs. notebook 19's two
+    clusters), consistent with a flat loss-surface region rather than a
+    real shift. Mechanistic read: TTA's raw-ensemble effect acted mainly
+    through ECE, which the LOFO-fit calibration already corrects for on
+    either composition — so once calibrated, there's nothing left for TTA
+    to add. **Final decision (user confirmed): drop flip-TTA.** Applying
+    this project's own step-6 gate rule ("a win smaller than the measured
+    noise floor is not a win") at the LOFO level — the number that
+    actually decides the shipped recipe — flip-TTA does not clear it, and
+    it has a real cost (~doubles in-container inference time for the
+    augment checkpoints, 25 of 150, against the tight 3h submission
+    budget). **Final adopted recipe is notebook 19's: plain-augment
+    6-variant ensemble (150 checkpoints, no TTA) + calibrated blend
+    T_cnn=0.58, T_baseline=0.88, w=0.53, LOFO mean 0.3740.** Flip-TTA
+    stays logged as a negative result at the recipe level (step 7) — the
+    inference code and OOF arrays stay on disk, unused, not wired into
+    `submission_src/main.py`.
+  - **Diminishing-returns pattern across items 1-5+7**: -0.0393 (item 1) →
+    -0.0105 (item 3) → -0.0044 (item 5) → -0.0049 (recalibration #1) →
+    -0.0001 (item 7 + recalibration #2, net) — the item-7/TTA step is
+    where the marginal gain finally bottoms out at noise; items 1-5 are
+    still real wins by this project's own LOFO bar. **Correction: items
+    1-5 and 7 are addressed; item 6 (bounded architecture check — a 2D-slab
+    CNN or similar as an additional ensemble member) was never actually
+    run and remains open. An earlier pass through this log claimed
+    "items 1-7 all addressed" — that was wrong.**
+  - **Status: NOT YET IMPLEMENTED.** All of notebooks 14-21 are
+    local-CV-only (zero submission cost). Remaining work before any of
+    this can be submitted: wire the logit-space calibrated blend into
+    `src/submission.py::combine_predictions` (signature change, TDD),
+    ensemble across all 6 variants' checkpoints (not just rung3's 25,
+    plain augment — no TTA inference path needed) in
+    `submission_src/main.py`, extend `scripts/build_submission_assets.py`'s
+    checkpoint-list packaging, replace the classical-baseline pickle
+    (`sklearn` 1.9.0→1.8.0 version mismatch already warned once) with a
+    plain `.npz`-params reconstruction, rebuild submission assets, rerun
+    the local Docker smoke test then the platform smoke test — all before
+    spending one of the 2-3 remaining real submissions.
+
+- 2026-09-10 (later, same day): **6-variant calibrated ensemble
+  implemented and shipped.** Wired via `superpowers:subagent-driven-
+  development` (7 commits, `45452e6`..`8ca41c0`): `model.py`'s checkpoint-
+  filename generator, `scripts/build_submission_assets.py`, and
+  `submission_src/main.py` all extended from rung3-only to all 6 variant
+  prefixes; `submission.py::combine_predictions` rewritten for the
+  logit-space-pooled, `LogisticRegression`-blend signature. Whole-branch
+  Opus review found zero Critical issues (2 Important + 3 Minor fixed in
+  one wave). Local Docker smoke test: **exit 0**, output shape verified.
+  Two real environment bugs found and fixed getting there: the separate
+  `~/Desktop/competition-sfmn-parkinsons-runtime/` clone's `submission_src/`
+  is a physically separate copy (not a symlink) and must be manually
+  re-synced before every pack; Git Bash + `docker run --mount` mangles
+  the container-side path unless `MSYS2_ARG_CONV_EXCL="*"` is set
+  directly on the `docker run` invocation. **Platform smoke test: log
+  loss=0.2271** (n=20, not a ranking signal, only confirms the pipeline
+  runs). Submission budget resolved by the user: only **1** real
+  submission remained for the rest of the competition, not the 2-3
+  assumed earlier — raised the bar on review rigor for everything after
+  this point.
+
+- 2026-09-11: **Second real submission: log loss 0.4185, AUROC 0.8891**
+  (vs. the first, 0.4648/0.8796 — a real **-0.0463** improvement,
+  confirming the whole notebooks-14-through-22 line of work transferred
+  to the real leaderboard, not just CV). A 3rd Opus deep review ("are we
+  stuck?", after a literature/forum research pass) decomposed the result:
+  submission 2 sits within **+0.0020** log loss of the theoretical
+  optimum for its own discrimination ability (AUROC 0.8891) — calibration
+  is exhausted, any further gain needs more discrimination. All 3
+  literature-sourced candidates tried that day (bilinear/second-order
+  fusion, ridge-weighted variant reweighting, asymmetric-loss ensemble
+  disagreement) came back null in `notebooks/23_paired_gate_shipped_
+  recipe_candidates.ipynb`, exactly as pre-registered — also caught and
+  fixed a real gate-statistic bug (comparing a paired delta against the
+  *unpaired* across-fold sd, blind to any effect below ~0.011 SEM;
+  `evaluate.paired_gate`/`paired_bootstrap_ci` promoted from the notebook
+  to `src/evaluate.py` as the fix). Only remaining lever identified with
+  an actual discrimination mechanism: roadmap item 6 (bounded
+  architecture check, never run).
+
+- 2026-09-11 (later): **Roadmap item 6 built and run — a 2D thick-slab
+  CNN (Wenzel et al. 2019) as a 7th ensemble member.** Real geometry bug
+  found via systematic debugging before the full run (`crop_or_pad`'s
+  nearest-voxel rounding, negligible for the 3D track's 108mm-thick crop,
+  catastrophic for a 1-voxel/12mm-thick slab — fixed by resampling finer
+  and averaging 6 voxels for the same physical thickness). After the fix,
+  `notebooks/24_slab2d_architecture_diversity.ipynb`'s gate came back
+  **clean and negative** (delta=+0.0013, 95% CI=[+0.0001,+0.0025] —
+  reliably worse). A second Opus review, requested before accepting
+  "close the project," overturned that conclusion: the real cause wasn't
+  slab2d's architecture but `config.CROP_CENTER_MM` itself — a
+  population-**median** offset from a small (n=119) stratified sample,
+  with a genuinely large underlying spread (z sd≈32.5mm on that sample) —
+  so a 12mm-thick slab fixed at one point missed the striatum for most
+  subjects; the diluted blend-weight gate (slab2d got a fixed 1/7 weight)
+  also underpowered the test. A fairer gate (`op07fairgate`, slab2d as
+  its own learnable blend feature) came back genuinely **null**, not
+  negative. **This is the moment the striatum-crop-coverage investigation
+  started** — see below.
+
+- 2026-09-11 (final): **`notebooks/25_striatum_centroid_ras_frame_audit.ipynb`
+  built — production crop-coverage gap measured for the first time.**
+  Over all 1362 training volumes (RAS-resampled frame, matching what
+  `crop_or_pad` actually uses): striatum centroid offset sd on the z-axis
+  is **41.9mm** (larger than the earlier 32.5mm estimate — refutes the
+  "frame-mismatch inflated it" hypothesis). The shipped 0.4185 recipe's
+  fixed 3D crop contains the striatum centroid for only **70.2%** of
+  subjects. A 4th Opus review sized the likely CNN-alone effect at
+  -0.015 to -0.035 log loss and proposed a cheap, staged diagnostic plan
+  (contamination check → causal control via existing OOF arrays → gate
+  the coverage flag as a blend covariate → conditionally retrain) before
+  touching any production code.
+
+- 2026-09-12: **Steps 1-2 of that plan run — causal mechanism confirmed,
+  effect far larger than estimated.** Bbox z-extent contamination check
+  came back clean (rules out a thyroid/salivary-uptake mask-contamination
+  risk). The causal control (splitting the shipped OOF into covered/
+  uncovered subgroups by the centroid-inside-crop flag) found: CNN
+  covered-vs-uncovered log-loss delta **+0.2317**, 95% CI=
+  [+0.1701,+0.2927]; the crop-immune classical baseline's delta was flat
+  (+0.0020, CI crosses 0) — isolates the fixed crop itself, not general
+  subject difficulty, as the cause, and at roughly **2-4.6x** the 4th
+  review's own upper-bound estimate.
+
+- 2026-09-13: **Step 3 (gate the coverage flag as a blend covariate):
+  near-miss, not a clean pass** — delta=-0.0053, 95% CI=[-0.0110,+0.0001],
+  just barely fails to clear (whole CI < 0) this project's own
+  pre-registered rule. A 5th Opus review found the verdict was
+  imprecise, not wrong (`n_bootstrap=1000`'s own Monte Carlo error was
+  comparable to the margin in question — raised the default to 20000 in
+  `evaluate.paired_bootstrap_ci`) and reframed the plan: per-subject
+  centering is not more expensive than a "cheap" global re-center once
+  per-uid centroids already exist on disk, and has a much higher ceiling.
+  Free diagnostics (`notebooks/25` op08-op11) confirmed the window-bug
+  fix was immaterial, found the causal story survives a family confound
+  check (smaller than pooled but still clean within-family), and
+  produced the clearest evidence yet: **AUROC collapses from 0.9293
+  (covered) to 0.7088 (uncovered)** while the baseline barely moves — a
+  CNN-specific discrimination failure, not recalibratable.
+
+- 2026-09-13 (later): **`notebooks/26_striatum_coverage_retrain.ipynb` —
+  the largest single result this project has produced.** Trained a
+  rung3-equivalent CNN under two crop-center arms: a recentered-constant
+  (79% coverage) and a **per-subject-centered** one (`data.load_volume
+  (uid, center_mm="auto")`, each subject cropped around their own
+  measured centroid — 100% coverage by construction). Gated via
+  `evaluate.paired_repeat_gate` against the current CNN: recentered-
+  constant mean=-0.0251 (CI crosses 0, underpowered on log loss, though
+  AUROC ranks it a clean win); **per-subject mean=-0.1025, 95%
+  CI=[-0.1449,-0.0601] — passes decisively**, pooled log loss 0.3495 vs.
+  0.4520. A 6th Opus review, requested given the size of the result and
+  the stakes (last submission, ~3 days left), independently re-derived
+  every number bit-for-bit, found no bug or leakage, and recommended
+  shipping the new 25-checkpoint variant **alone** — re-adding the old 6
+  variants was measured to actively hurt the blend (0.3375 vs. 0.3076).
+
+- 2026-09-13 (final): **Production rewrite + final submission.** TDD
+  throughout: `features.striatum_center_mm` (per-volume centroid, the
+  algebraic inverse of `crop_or_pad`'s own convention — locked in with a
+  round-trip test), `config.CROP_CENTER_FALLBACK_MM` (degenerate-mask
+  fallback, 0/1362 in training), `data.load_volume(uid, center_mm="auto")`,
+  `model.PRODUCTION_VARIANT_PREFIXES = ["coveragefix_persubject"]`
+  (replacing the old 6-variant list entirely). `notebooks/27_coverage_
+  blend_refit.ipynb` refit the calibrated blend on the new composition
+  (gate vs. shipped: delta=-0.0541, CI=[-0.0762,-0.0322]) and ran the
+  de-risking check the 6th review asked for — recomputing
+  `striatum_center_mm` via the real production code path for 100 sampled
+  training uids, an **exact bit-for-bit match** against `notebooks/25`'s
+  measurements. Two real packaging bugs caught and fixed while shipping:
+  `build_submission_assets.py::copy_checkpoints()` never removed stale
+  checkpoints (the old 150 stayed in `model_assets/` and got zipped in
+  alongside the new 25) — fixed to wipe the destination first; and the
+  separate runtime-repo clone's `entrypoint.sh` had CRLF line endings
+  (a Windows git-checkout artifact) breaking bash parsing inside the
+  Linux container — fixed with `sed -i 's/\r$//'`. Also added explicit
+  logging of the CNN's own auto-centering fallback rate (previously only
+  the classical baseline logged its degenerate-mask count), so a smoke
+  test log directly shows "N/20 used their own measured centroid."
+  **Local Docker smoke test: exit 0, 20/20 valid on both sides, 0
+  fallbacks.** Platform smoke test (0.2420) read correctly as noise
+  (n=20, SE≈±0.1) against the old recipe's own smoke score (0.2271), not
+  a regression — both smoke scores beat their own honest CV estimates, a
+  known pattern in this project.
+  **FINAL REAL SUBMISSION (the last one): log loss=0.2975, AUROC=0.9433**
+  — a **-0.1210** improvement over submission 2 (0.4185/0.8891), the
+  single largest gain of the whole project, and for the first time the
+  real score landed *better* than the honest row-wise-CV estimate
+  (0.3076) rather than showing the usual CV-to-LB shortfall. **Project
+  closed** — the striatum-crop-coverage investigation (started
+  2026-09-11) is fully resolved: a real production defect (fixed-
+  population-median crop center) found, causally isolated, fixed, and
+  validated on the real leaderboard.
+
+- [x] Run `notebooks/01_eda_volumes.ipynb` and record the answers to its
+      questions here — see Progress above (2026-09-08).
+- [x] Redo the striatum crop-size estimate with a p99 threshold +
+      connected-component filter — see Progress above (2026-09-08).
+- [x] Section 6b (signed L-R asymmetry) re-run on all 1362 volumes — see
+      Progress above (2026-09-08). Flip augmentation cleared as safe to try.
+- [x] Section 6d (single-feature ranking) re-run on all 1362 volumes.
+      **`abs_asym` (striatal L-R asymmetry magnitude) alone: AUC 0.731,
+      log loss 0.6126, a -0.0759 improvement over baseline** — stronger
+      than the entire 31-feature metadata-only model (section 11, AUC
+      0.551). `striatal_ratio`: AUC 0.621, -0.0212. Everything else
+      (total_counts, vol_max, vol_p99, signed_asym) is noise-floor-level.
+      **Strong candidate features for the classical baseline**, and a
+      reference point for the CNN track (log loss ≈0.61 from one scalar —
+      the CNN should clear this once trained). Full table in `RESOURCES.md`
+      is unnecessary — it's in the notebook's own section 6d findings cell.
+- [x] Sections 5 + 6c (adaptive background threshold, per-family intensity)
+      re-run on 119 volumes stratified across all 17 spacing families.
+      Verifies, doesn't revise, the earlier decision: `p30 > 0` for 35/119
+      (29%) volumes, but **deterministically by family** — every volume in
+      the 3 finest-resolution families (2.00mm, ~1.47mm, ~1.5-1.8mm) has
+      `p30>0`, every volume in every coarser family has `p30=0`
+      (`zero_frac` median 0.043 vs. 0.965 — a 22× difference in how much
+      of the FOV is background). Confirms `BACKGROUND_MAX_FRACTION=0.05`
+      is load-bearing for those 3 families specifically, and that raw
+      intensity scale (why `vol_max`/`vol_p99`/`total_counts` scored at
+      noise-floor in section 6d) is dominated by scanner family, not
+      pathology — only scale-free ratios are comparable across the
+      dataset. No config change.
+- [x] Section 12 (duplicate fingerprint) re-run on all 1362 volumes: 0
+      hash collisions, 0 total-intensity collisions, 0 volumes sharing
+      both geometry and intensity. **"One file per patient" confirmed** —
+      `GroupKFold` on patient identity remains unnecessary.
+- [x] **Section 6a RESOLVED. `config.CROP_SIZE_MM` is set.** Excluding
+      the 7 named outlier uids (112/119 remaining), `kept_mL` is tight and
+      trustworthy: mean 19.10, std 3.25, median 20.00 exactly, max 29.34
+      (no more 500+ mL blobs). Final values, now in `config.py`:
+      - `CROP_SIZE_MM = (135.0, 70.0, 105.0)` mm — fits `MIN_FOV_MM` on
+        all 3 axes, but only by **3 mm on z** (105 vs. 108) — `data.py`
+        must pad/clamp explicitly for the handful of tight-FOV volumes
+        (section 7), not assume headroom.
+      - `CROP_CENTER_MM = (1.5, 22.8, -15.5)` mm (median offset from
+        geometric centre) — z is negative (inferior to centre), matching
+        the independently-measured `centroid_z ≈ 0.37-0.39` finding.
+      - `TARGET_SHAPE = (56, 30, 44)` voxels at `TARGET_SPACING = 2.46mm`.
+      `ft07x5ic` (the 523 mL outlier) checked and has an unremarkable
+      header (normal `uint16`, mild obliquity, ordinary shape) — a real
+      per-file pixel-content anomaly, not a recurring pattern. **Because
+      this kind of anomaly can recur on unseen data, `data.py` must
+      sanity-check the detected striatum region size defensively** (flag
+      or fall back if extraction lands far outside ~10-30 mL), not assume
+      every file behaves like the clean 112. This closes the last blocker
+      for `data.py`. Section 6d's `abs_asym`/`striatal_ratio` numbers used
+      the same `TARGET_ML=20.0` mask and don't need to be re-run.
+- [x] `src/evaluate.py` written (TDD, `tests/test_evaluate.py`, 11 tests,
+      clean pass): `log_loss_score` (the gated metric), `auroc_score` +
+      `expected_calibration_error` (diagnostics, per Chegodaev et al. in
+      `RESOURCES.md`), `combined_score`, and `make_folds` (Stratified
+      K-Fold jointly on target × in-plane-spacing family — rare families
+      collapsed to a "rare" bucket per target class, falling back to that
+      class's largest family if even "rare" would be unsplittable, so
+      `StratifiedKFold` never gets a cell smaller than `n_splits`).
+- [x] Noise floor measured in `notebooks/02_evaluate_noise_floor.ipynb`:
+      `evaluate.make_folds` + `evaluate.log_loss_score`, `abs_asym` alone,
+      5 seeds — **mean=0.6119, sd=0.0001** (matches section 6d's
+      single-split 0.6126, confirming `evaluate.py` reproduces it — the
+      harness works end-to-end on real data). **Caveat that matters**:
+      this is the floor for *this specific probe* (1 feature, 2-parameter
+      model, these folds) — a low-variance case by construction (strong,
+      stable single feature). It is **not** a universal threshold; the
+      classical baseline and especially the 3D-CNN (more parameters,
+      stochastic training) need their **own** noise-floor measurement once
+      built (`SKILL.md`: re-measure whenever fold structure, data, or
+      model class changes) — don't reuse `sd=0.0001` to judge their
+      deltas.
+      **Fold design:** Stratified K-Fold on `is_pathologic` **stratified
+      jointly with the in-plane-spacing family** (the proxy whose confound
+      is actually significant, p=0.00042 — not the (shape,spacing) proxy,
+      p=0.124). Rationale for stratify-by-source rather than
+      leave-one-site-out: all 20 smoke-test (shape,spacing) combos already
+      occur in training (EDA section 9), so the test set appears to draw
+      from the same centres, and `deep-learning-imaging.md` says to pick
+      the fold structure from the test set's actual composition. Because
+      metadata alone is worth only −0.0006 log loss, this is insurance
+      against uneven fold composition, not leak containment — so do **not**
+      pay for `GroupKFold` on the proxy (its largest group is 34% of the
+      data, which cannot be split 5 ways). Additionally run
+      leave-one-family-out once at rung 2 as a transfer check, and report
+      the scored metric per family, not only pooled.
+- [x] Baseline gate cleared in `notebooks/03_baseline_classical.ipynb`
+      (`StandardScaler` + `LogisticRegression`, 5 seeds, apples-to-apples
+      via `evaluate.py`): `abs_asym` alone 0.5959, `striatal_ratio` alone
+      0.6666 (weak on its own), **combined 0.5831 — beats `abs_asym` alone
+      by -0.0128, 18-25× this run's own sd (0.0003-0.0007), a real win**.
+      Both features graduate to `src/features.py` + `src/model.py`.
+      **Methodology note**: this pipeline adds `StandardScaler`, which
+      `02_evaluate_noise_floor.ipynb` didn't — that changes the
+      `abs_asym`-alone number (0.6119 there vs. 0.5959 here), so `02`'s
+      sd=0.0001 isn't the right noise reference for this comparison; use
+      this run's own per-feature-set sd instead. `02` still stands for
+      confirming `evaluate.py` reproduces section 6d end-to-end.
+- [x] `src/features.py` + `src/model.py` written (TDD, synthetic 3D
+      arrays, not real patient data). 20/20 tests pass, clean.
+      `features.striatum_mask`/`signed_asymmetry`/`striatal_ratio` use the
+      **corrected** (central-region-restricted) mask logic from EDA
+      section 6a's final resolution — not the unrestricted version
+      section 6d originally used to produce `eda_features.csv`. TDD caught
+      two real bugs before they shipped: `striatum_mask` on an all-zero
+      volume returned the *entire* array as the mask (a `>=` threshold tie
+      on an all-zero central region), and a peripheral artifact was
+      confirmed excluded by the central-margin restriction.
+      `src/model.py::build_classical_baseline()` is
+      `StandardScaler` + `LogisticRegression`.
+- [x] **Gate re-validated against the real `src/features.py` code**
+      (`notebooks/03_baseline_classical.ipynb`, all 1362 volumes recomputed
+      via `src/features.py` itself, 0 skipped as degenerate -- writes
+      `data/processed/baseline_features.csv`; same abs_asym/striatal_ratio/
+      combined comparison via `evaluate.py`, 5 seeds): `abs_asym` alone
+      0.5889, `striatal_ratio` alone 0.6647, **combined 0.5753 — beats
+      `abs_asym` alone by -0.0136, ~20-45× this run's own sd
+      (0.0003-0.0006)**. Confirms (doesn't revise) the provisional pass:
+      same direction and magnitude (-0.1132 vs. baseline here, -0.1054
+      there). The central-region-restricted mask changed the exact numbers
+      slightly but not the decision. `src/model.py::build_classical_baseline()`
+      docstring updated to cite these confirmed numbers.
+- [x] Baseline candidate technique for the site confound at the feature
+      level: **ComBat** harmonization (Fortin et al. 2018) — a 7-site
+      PPMI radiomics study using the same confound reported AUC 0.71→0.77
+      after ComBat-GAM, and found per-volume intensity normalization alone
+      insufficient for it (`RESOURCES.md`). Fit harmonization parameters
+      on controls only (their leakage-avoidance detail) before applying to
+      patients. Not directly applicable to the 3D-CNN track (ComBat
+      operates on scalar features, not raw voxel grids).
+      **Gate passed 2026-09-08** in `notebooks/04_combat_harmonization.ipynb`
+      (reused `baseline_features.csv`, no new `.nii.gz` access, 5 seeds,
+      same fold loop as `03`): `combined + ComBat` 0.5290 vs. `combined`
+      (no ComBat, same-run-recomputed) 0.5753 — **delta -0.0462, ~40-80x
+      this run's own per-variant sd (0.0006-0.0011)**, far outside noise.
+      Parametric empirical-Bayes ComBat (Johnson et al. 2007,
+      `RESOURCES.md`), batch = in-plane spacing family (the confound EDA
+      3a found significant, χ²=24.54, p=0.00042), fit on each fold's
+      training-set controls only — matches the Frontiers 2022 PPMI
+      leakage-avoidance precedent. **Wired into `src/model.py`** as
+      `ComBatHarmonizedPipeline`/`build_combat_baseline()` (TDD,
+      `tests/test_model.py`, 4 new tests — fits/predicts valid
+      probabilities, fits ComBat on controls only, handles unseen-batch
+      rows at predict time, fresh instance per call; 28/28 project tests
+      pass). `build_combat_baseline()` is now the classical baseline to
+      actually use; `build_classical_baseline()` (no ComBat) stays as the
+      weaker reference point it beat.
+- [x] Main track: 3D CNN on resampled volumes — see Progress above
+      (2026-09-09). **Gate passed; final model is a CNN+`build_combat_baseline()`
+      blend at w_cnn=0.70**, not the CNN alone.
+- [ ] `RESOURCES.md`: log every technique and every external
+      data/pretrained-model candidate as it's considered.
+- [x] Submission packaging + local Docker rehearsal + first full
+      submission — see Progress above (2026-09-09). Local smoke test,
+      platform smoke test (0.3051), and first full submission
+      (**0.4648, rank #254**) all passed/scored. A real
+      disqualification-risk bug (test uid leaked into a log warning) was
+      caught and fixed (commit 069bb28) before further submissions.
+- [x] **Second and third (final) real submissions** — see Progress above
+      (2026-09-11, 2026-09-13). Submission 2 (6-variant calibrated
+      ensemble): **0.4185/0.8891**. Submission 3, the last one (25-checkpoint
+      per-subject-centered CNN replacing the old ensemble entirely, after
+      the striatum-crop-coverage investigation): **0.2975/0.9433** — the
+      final result. All 3 real submissions used; project closed.
