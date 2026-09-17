@@ -7,7 +7,7 @@ Built for [DrivenData's DaT Parkinson's Challenge](https://www.drivendata.org/co
 (French Society of Nuclear Medicine, 2026), closed 2026-09-16.
 
 **Project site with the full write-up, charts and the "what worked / what
-didn't" analysis:** [docs/index.html](docs/index.html)
+didn't" analysis:** https://alherma7.github.io/DaT_Parkinson/
 
 | | |
 |---|---|
@@ -17,7 +17,7 @@ didn't" analysis:** [docs/index.html](docs/index.html)
 
 The gap between the score shown at submission time (0.2975) and the final
 confirmed leaderboard result (0.3436) is real and reported here honestly —
-see [the project site](docs/index.html#results) for the discussion.
+see [the project site](https://alherma7.github.io/DaT_Parkinson/#results) for the discussion.
 
 ## The final pipeline
 
@@ -48,7 +48,7 @@ architecture) was measured and rejected — each with its own statistical
 gate, delta and confidence interval.
 
 Full tables with every accepted and rejected experiment, their deltas, and
-why, are in [docs/index.html](docs/index.html).
+why, are on [the project site](https://alherma7.github.io/DaT_Parkinson/).
 
 ## Repository layout
 
